@@ -13,6 +13,8 @@ import { TnrForm } from "@/components/tnr/TnrForm";
 import { AdoptionForm } from "@/components/adoption/AdoptionForm";
 import { CommentForm, CommentList, type CommentItem } from "@/components/comments/CommentUI";
 import { FollowBookmarkButtons } from "@/components/cat/FollowBookmarkButtons";
+import { FlagButton } from "@/components/moderation/FlagButton";
+import { CaseGovernanceActions } from "@/components/cases/CaseGovernanceActions";
 
 export const metadata = { title: "Cat Profile — PawPin" };
 
@@ -104,12 +106,14 @@ export default async function CatProfilePage({ params }: { params: { catId: stri
     ? await supabase.from("adoptions").select("id, status").eq("cat_id", cat.id).maybeSingle()
     : { data: null };
 
-  const { data: rawComments } = await supabase
+  const isAdmin = sessionUser?.role === "admin";
+
+  const commentsQuery = supabase
     .from("comments")
-    .select("id, body, created_at, author_id")
+    .select("id, body, created_at, author_id, is_hidden")
     .eq("cat_id", cat.id)
-    .eq("is_hidden", false)
     .order("created_at", { ascending: false });
+  const { data: rawComments } = isAdmin ? await commentsQuery : await commentsQuery.eq("is_hidden", false);
 
   const authorIds = [...new Set((rawComments ?? []).map((c) => c.author_id).filter(Boolean))] as string[];
   const { data: authorProfiles } =
@@ -123,6 +127,7 @@ export default async function CatProfilePage({ params }: { params: { catId: stri
     created_at: c.created_at,
     author_id: c.author_id,
     authorName: c.author_id ? nameByAuthor.get(c.author_id) ?? null : null,
+    is_hidden: c.is_hidden,
   }));
 
   let isFollowing = false;
@@ -217,6 +222,9 @@ export default async function CatProfilePage({ params }: { params: { catId: stri
               initiallyBookmarked={isBookmarked}
             />
           )}
+          {sessionUser && !isAdmin && (
+            <FlagButton targetType="cat" targetId={cat.id} label="Report this profile" />
+          )}
         </div>
       </div>
 
@@ -243,6 +251,20 @@ export default async function CatProfilePage({ params }: { params: { catId: stri
               />
             ) : (
               <p className="text-xs text-gray-500">Sign in as a volunteer to claim this case.</p>
+            )}
+            {isAuthorisedCarer && (
+              <div className="border-t border-brand-100 pt-3">
+                <CaseGovernanceActions
+                  caseId={currentCase.id}
+                  status={currentCase.status}
+                  isClaimedByMe={alreadyClaimedByMe}
+                  canReassign={Boolean(
+                    sessionUser &&
+                      (sessionUser.role === "admin" ||
+                        (sessionUser.role === "org" && currentCase.org_id))
+                  )}
+                />
+              </div>
             )}
           </div>
         ) : (
@@ -383,7 +405,7 @@ export default async function CatProfilePage({ params }: { params: { catId: stri
               <a href="/auth/sign-in" className="font-medium text-brand-600 hover:underline">Sign in</a> to comment.
             </p>
           )}
-          <CommentList comments={comments} />
+          <CommentList comments={comments} isAdmin={isAdmin} />
         </div>
       </section>
     </div>

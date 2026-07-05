@@ -8,155 +8,152 @@ npm run typecheck   # TypeScript type checking (no emit)
 npm run build       # production build (also type-checks + lints)
 ```
 
-Current unit coverage (73 tests across 6 files):
+Current unit coverage (97 tests across 6 files):
 
-**`src/lib/matching/engine.test.ts` (11 tests)** — scoring behaviour (identical/
-different traits, distance/recency sensitivity, unknown-field neutrality,
-distinguishing-mark boost, ear-tip cap, threshold filtering, max-5 cap,
-required disclaimer/reasons). Unchanged since M3.
+**`src/lib/matching/engine.test.ts` (11)** and
+**`src/lib/matching/wordingAndPrivacy.test.ts` (3)** — matching engine
+scoring and wording/privacy contracts, unchanged since M3.
 
-**`src/lib/matching/wordingAndPrivacy.test.ts` (3 tests)** — forbidden-phrase
-scan, exact disclaimer string, `PublicMatchCandidate` has no coordinate keys.
-Unchanged since M3.
+**`src/lib/geo/location.test.ts` (6)** and
+**`src/lib/map/publicMapPrivacy.test.ts` (4)** — unchanged since M2.
 
-**`src/lib/geo/location.test.ts` (6 tests)** and
-**`src/lib/map/publicMapPrivacy.test.ts` (4 tests)** — unchanged since M2.
+**`src/lib/validation/validation.test.ts` (52 tests)** — image/sign-up/
+sighting/comment/matching/coordination schemas (M2–M4), plus M5 additions:
+- `updateUserRoleSchema` — invalid role rejected, valid update accepted,
+  `isApproved` must be boolean.
+- `approveOrganizationSchema` / `rejectOrganizationSchema` — valid/invalid
+  org UUID, optional note.
+- `reviewModerationFlagSchema` — invalid action rejected, all four valid
+  actions (`dismiss`/`resolve`/`hide_comment`/`close_case`) accepted.
+- `hideCommentSchema` / `unhideCommentSchema` — valid/invalid comment UUID.
+- `closeCaseSchema` / `reopenCaseSchema` / `archiveCaseSchema` /
+  `releaseClaimSchema` — valid/invalid case UUID, optional note.
+- `reassignCaseSchema` — requires both `caseId` and `newClaimedBy` as valid
+  UUIDs.
 
-**`src/lib/validation/validation.test.ts` (39 tests)** — image/sign-up/
-sighting/comment/matching-decision schemas (M2/M3), plus M4 additions:
-- `claimCaseSchema` — valid/invalid case UUID.
-- `caseUpdateSchema` — empty note rejected, invalid category rejected, valid
-  update accepted.
-- `feedingScheduleSchema` — empty description rejected, frequency defaults to
-  `daily`, invalid frequency rejected.
-- `feedingLogSchema` — accepts the new `foodType` field.
-- `tnrRecordSchema` — accepts all 7 M4 status values
-  (`not_started`/`trap_planned`/`trapped`/`surgery_scheduled`/`neutered`/
-  `ear_tipped`/`released`), rejects an invalid status.
-- `adoptionSchema` — accepts all 6 M4 status values
-  (`not_available`/`intake`/`available`/`application_received`/`matched`/
-  `adopted`), rejects a legacy M0 status (`inquiry`), accepts an optional
-  adopter contact.
-- `followCatSchema` / `bookmarkCatSchema` — valid/invalid cat UUID.
-- Documents the plain-text contract for `commentSchema`: the schema itself
-  does not sanitise HTML — safety comes from React's default text escaping
-  at render time (`CommentList` never uses `dangerouslySetInnerHTML`), and
-  this test makes that division of responsibility explicit rather than
-  assuming it.
+**`src/lib/auth/roleGating.test.ts` (21 tests, extended in M5)**
+- M4 claim-eligibility tests (`hasAtLeast`, role predicates) — unchanged.
+- **Admin action gating (new)**: `isAdmin` correctly classifies every role
+  (including `null`/`undefined`/`"guest"`) as ineligible for admin-only
+  tooling except `"admin"` itself. This mirrors the `is_admin()` check every
+  M5 RPC performs server-side.
+- **Hidden comment visibility contract (new, 4 tests)**: a guest, and a
+  normal user who is not the comment's author, cannot see a hidden comment;
+  the comment's own author can still see their own hidden comment; an admin
+  can see any hidden comment. This is the same predicate the cat profile
+  page uses to decide whether to include `is_hidden` rows in its query.
+- **Audit log payload shape contract (new, 5 tests)**: valid shapes for a
+  role-update, org-approval, and empty-diff (e.g. `unhide_comment`) audit
+  entry are accepted; an entry with an array `diff` or a missing `action`
+  field is rejected. Guards `AuditLogTable`'s assumption that `diff` is
+  always a plain object it can safely `JSON.stringify`.
 
-**`src/lib/auth/roleGating.test.ts` (10 tests, new in M4)**
-- `hasAtLeast` mirrors the `claim_case` RPC's role check: a plain `user` and
-  a guest (`null`/`undefined`/`"guest"`) are never eligible; `volunteer`,
-  `org`, and `admin` all are.
-- `isAdmin`/`isVolunteer`/`isOrg` predicate correctness.
-- Notification payload shape contract: valid shapes for `case_claimed`,
-  `status_change`, and `new_sighting` payloads are accepted; a payload
-  missing the required `message` field is rejected. This guards the
-  `NotificationsBell` component's payload-reading code against a silent
-  shape mismatch with `notify_followers()`.
-
-**Verified for this milestone:** `npm run build` succeeds (15 routes),
-`npm run test` passes (73/73), `npm run lint` is clean, `npm run typecheck`
+**Verified for this milestone:** `npm run build` succeeds (19 routes),
+`npm run test` passes (97/97), `npm run lint` is clean, `npm run typecheck`
 is clean.
 
-## Manual QA checklist (M4 additions)
+## Manual QA checklist (M5 additions)
 
-### Claim flow
-- [ ] Signed in as `user@pawpin.test` (role `user`): visiting an unclaimed
-      case's cat profile shows an explanatory message, not a claim button.
-- [ ] Signed in as `volunteer@pawpin.test`: an unclaimed case shows "I can
-      help — claim this case"; clicking it claims the case, refreshes the
-      page, and now shows "✓ You're handling this case".
-- [ ] A `case_events` row "Case claimed by volunteer" appears in the case
-      timeline immediately after claiming.
-- [ ] **Double-claim prevention:** attempting to claim an already-claimed
-      case as a *different* volunteer (not admin, not the same org) is
-      rejected with "This case has already been claimed by another
-      volunteer."
-- [ ] **Org override:** a signed-in `org` user whose `org_id` matches the
-      case's `org_id` CAN re-claim/take over an already-claimed case.
-- [ ] Admin can claim/reassign any case regardless of current claim.
+### Admin dashboard access control
+- [ ] Signed out or signed in as `user@pawpin.test`: visiting `/admin` (or
+      any `/admin/*` sub-page) redirects away (role guard) — no admin
+      content is ever rendered to a non-admin.
+- [ ] Signed in as `admin@pawpin.test`: `/admin` shows real counts (total
+      users, pending volunteer/org approvals, open flags, active/closed
+      cases) matching the seeded data, plus recent audit logs and recent
+      reports with working quick links.
 
-### Feeding workflow
-- [ ] As the claiming volunteer, create a feeding schedule (frequency,
-      description, optional location + next feeding time) from the cat
-      profile — it appears under "Active schedule" immediately.
-- [ ] Log a feeding (food type + notes) — it appears in "Recent feeding
-      history" and in the combined timeline ("Feeding logged").
-- [ ] A non-carer (e.g. a different registered user) does not see the
-      feeding schedule/log forms on the cat profile.
+### Role & approval management
+- [ ] `/admin/users` lists all profiles with role, approval status, and
+      organisation name (where applicable).
+- [ ] Changing `pending_volunteer@pawpin.test`'s "Approved" checkbox to
+      checked and saving immediately reflects on their next
+      `/dashboard/volunteer` visit (pending-approval message disappears).
+- [ ] As `admin@pawpin.test`, the role `<select>` for your **own** row is
+      disabled — you cannot even attempt to change your own role away from
+      admin via the UI.
+- [ ] Every role/approval change writes a new row to `/admin/audit-logs`
+      with `action = 'update_user_role'` and a `diff` showing before/after.
 
-### TNR workflow
-- [ ] Update TNR status through the sequence
-      not_started → trap_planned → trapped → surgery_scheduled → neutered →
-      ear_tipped → released; each update appears in the timeline as "Tnr
-      update".
-- [ ] Setting status to `released` promotes the cat's overall status to
-      "Released" — verify on the cat profile's status badge.
-- [ ] **Regression guard:** for a cat already `adopted` (e.g. seeded cat #6),
-      confirm that setting a (hypothetical) TNR record's status to `released`
-      does NOT change the cat's status away from `adopted` — check
-      `update_tnr_record`'s guard directly in SQL if needed.
+### Organisation approval
+- [ ] `/admin/organizations` shows "Paws & Whiskers Rescue" under "Pending
+      approval" and "Alley Cat Rescue" under "Approved".
+- [ ] Approving the pending org (optionally with a note) moves it to the
+      "Approved" section and writes an `approve_organization` audit log row.
+- [ ] Signing in as an `org`-role user linked to an unapproved organisation
+      shows the "pending admin approval" message on `/dashboard/org` instead
+      of the dashboard content.
+- [ ] Rejecting an organisation (with a confirm prompt) keeps the row
+      visible (not deleted) with `is_approved = false` and the admin note
+      stored.
 
-### Adoption workflow
-- [ ] Update adoption status through
-      not_available → intake → available → application_received → matched →
-      adopted; each update appears in the timeline as "Adoption update".
-- [ ] Setting status to `adopted` promotes the cat's status to "Adopted" and
-      closes the case (`closed_at` set) — verify via the case's status badge.
-- [ ] Enter an adopter contact value, submit, then reload the page: the form
-      never displays the previously-entered value back (write-only by
-      design — see `docs/security-report.md` §4b).
-- [ ] A guest/non-carer visiting the cat profile sees only the adoption
-      **status** badge, never a contact field or form.
+### Moderation flags
+- [ ] `/admin/flags` shows the two seeded open flags (one `comment`-type on
+      the hidden-comment example, one `cat`-type on cat #4).
+- [ ] The comment-type flag's card offers a "Hide comment" action; the
+      cat-type flag's card offers a "Close case" action; both offer
+      "Dismiss" and "Mark resolved".
+- [ ] Taking any action moves the flag out of "Open flags" and into
+      "Recently reviewed", and writes a `review_moderation_flag` audit log row.
+- [ ] From a cat profile, a signed-in non-admin can flag the cat profile or
+      a comment via the 🚩 report control; the new flag appears in
+      `/admin/flags`.
 
-### Comments / follow / bookmark
-- [ ] Signed-in users can post a comment on a cat profile; it appears
-      immediately with the author's display name and timestamp.
-- [ ] Posting `<script>alert(1)</script>` as a comment renders it as literal
-      text on the page (view page source / inspect — no script executes).
-- [ ] Follow/unfollow and bookmark/unbookmark toggle correctly and persist
-      across a page reload (state is read from `follows`/`bookmarks` on
-      load, not just client state).
-- [ ] A guest sees a "Sign in to comment" prompt instead of a broken form.
+### Comment hide/unhide
+- [ ] Signed in as `user@pawpin.test`, visit cat #2's profile — the seeded
+      hidden comment ("Buy cheap supplements...") does **not** appear at all.
+- [ ] Signed in as `admin@pawpin.test`, the same comment appears with a
+      "Hidden" badge and an "Unhide" control.
+- [ ] Clicking "Unhide" makes the comment visible to normal users again on
+      the next load; clicking "Hide" on any comment removes it from normal
+      users' view immediately.
+- [ ] Comment text is identical before/after hiding — only visibility changes.
 
-### Notifications
-- [ ] After a followed cat's case is claimed, TNR/adoption status changes, or
-      a case update is posted, the follower's navbar bell shows an unread
-      badge on next page load.
-- [ ] Opening the bell dropdown marks all shown notifications as read
-      (badge clears); each entry links to the relevant cat profile.
-- [ ] The self-notification exclusion works: claiming your own previously
-      self-reported case does not notify yourself (only *other* followers).
+### Case governance
+- [ ] On cat #4's profile (medical case), an authorised carer or admin sees
+      "Close case", "Archive case", and (if applicable) "Release my claim"
+      buttons, each with a confirmation prompt.
+- [ ] Closing or archiving a case appends the corresponding `case_events`
+      row (`case_closed`/`case_archived`) and updates the status badge.
+- [ ] On cat #8 (seeded `closed`) or cat #9 (seeded `archived`), a "Reopen
+      case" button appears; reopening sets status back to `active` and
+      appends `case_reopened`.
+- [ ] Attempting to reopen a case that is `adopted`/`released` is not
+      offered by the UI (the button only appears for `closed`/`archived`),
+      and the `reopen_case` RPC itself rejects such an attempt if called
+      directly.
+- [ ] "Reassign…" (admin or org member of the case's org) accepts a target
+      user ID and, on success, updates `claimed_by` and appends
+      `case_reassigned`; providing a non-volunteer/org/admin user ID is
+      rejected with a clear error.
 
-### Dashboards
-- [ ] `/dashboard/volunteer` (as `volunteer@pawpin.test`) shows the seeded
-      claimed case (orange tabby) with its feeding/TNR badges, plus the
-      unclaimed critical kitten case under "Open urgent cases nearby".
-- [ ] `/dashboard/org` (as `org@pawpin.test`) shows stat cards, the unclaimed
-      kitten case, and non-empty TNR/adoption pipeline breakdowns.
-- [ ] A plain `user` visiting either dashboard URL directly is redirected
-      (role guard).
+### Audit log viewer
+- [ ] `/admin/audit-logs` shows at least the 6 explicit seeded rows plus any
+      trigger-generated rows from earlier seed inserts.
+- [ ] The "Action" and "Entity type" filters narrow the table correctly and
+      can be combined.
+- [ ] The table is read-only — no edit/delete controls exist anywhere on
+      the page.
+- [ ] Non-admins cannot reach `/admin/audit-logs` (role guard) and cannot
+      `select * from audit_logs` directly (RLS `audit_select` policy).
 
-### RLS — verify per role (Supabase SQL editor "Run as" / app sessions)
-- [ ] A non-admin, non-volunteer, non-org `update profiles set role='admin'`
-      is rejected by the guard (unchanged from M1, still verify).
-- [ ] `select adopter_contact from adoptions` as a plain `user` (not a carer
-      on that cat) returns no rows.
-- [ ] Calling `select * from claim_case('<some-case-id>')` directly as a
-      plain `user` role raises "Only volunteers, organisations, or admins
-      can claim a case".
+### RLS / RPC direct-call checks (Supabase SQL editor)
+- [ ] Calling `select update_user_role(...)` as a non-admin raises "Only an
+      admin can change user roles".
+- [ ] Calling `select claim_case(...)` as the seeded pending volunteer
+      raises "Your account is pending admin approval and cannot claim cases
+      yet".
+- [ ] Calling `select reopen_case(...)` on an `adopted` case raises "Only a
+      closed or archived case can be reopened".
 
 ## How to run the seed and verify data
 
-1. Run migrations `0001`–`0009`, then `supabase/seed.sql`.
-2. Confirm: the orange tabby's case (#1) is claimed by the demo volunteer
-   with an active feeding schedule + 2 logs; the calico's case (#2) has an
-   in-progress TNR record (`neutered`, ear-tipped, recovering); the black
-   kitten's case (#5) is unclaimed and critical priority; three adoption
-   records exist across `available`/`matched`/`adopted`; comments, follows,
-   bookmarks, and four notification examples (covering `case_claimed`,
-   `tnr_update`, `adoption_update`, `new_sighting`) are present.
-3. Sign in as `volunteer@pawpin.test` and visit `/dashboard/volunteer` to see
-   the claimed case and its tasks; sign in as `user@pawpin.test` to see the
-   notification bell populated from the seeded follows.
+1. Run migrations `0001`–`0010`, then `supabase/seed.sql`.
+2. Confirm 5 profiles (one pending volunteer, `is_approved = false`), 2
+   organisations (one pending), 9 cats, a hidden comment, 2 open + 1
+   resolved moderation flags, a closed case (#8) and an archived case (#9),
+   and at least 6 explicit `audit_logs` rows covering
+   `update_user_role`/`approve_organization`/`close_case`/`archive_case`/
+   `review_moderation_flag`.
+3. Sign in as `admin@pawpin.test` and walk through `/admin`, `/admin/users`,
+   `/admin/organizations`, `/admin/flags`, and `/admin/audit-logs` in order.

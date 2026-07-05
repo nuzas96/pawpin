@@ -18,7 +18,8 @@ export type CaseStatus =
   | "ready_for_adoption"
   | "adopted"
   | "released"
-  | "closed";
+  | "closed"
+  | "archived";
 export type UrgencyLevel = "low" | "medium" | "high" | "critical";
 export type CoatColor =
   | "black"
@@ -62,6 +63,8 @@ export type AdoptionStatus =
   | "matched"
   | "adopted";
 export type CaseUpdateCategory = "progress" | "medical" | "feeding" | "tnr" | "adoption" | "general";
+export type ModerationFlagStatus = "open" | "reviewing" | "dismissed" | "resolved";
+export type ModerationAction = "dismiss" | "resolve" | "hide_comment" | "close_case";
 export type FlagReason =
   | "spam"
   | "inappropriate"
@@ -103,6 +106,7 @@ export interface Database {
           contact_email: string | null;
           is_approved: boolean;
           verified_by: string | null;
+          admin_note: string | null;
         } & Timestamps;
         Insert: {
           id?: string;
@@ -110,6 +114,7 @@ export interface Database {
           contact_email?: string | null;
           is_approved?: boolean;
           verified_by?: string | null;
+          admin_note?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["organizations"]["Insert"]>;
         Relationships: [];
@@ -396,8 +401,10 @@ export interface Database {
           reason: FlagReason;
           details: string | null;
           reported_by: string | null;
-          status: string;
+          status: ModerationFlagStatus;
           resolved_by: string | null;
+          resolved_at: string | null;
+          resolution_note: string | null;
           created_at: string;
         };
         Insert: {
@@ -407,8 +414,10 @@ export interface Database {
           reason: FlagReason;
           details?: string | null;
           reported_by?: string | null;
-          status?: string;
+          status?: ModerationFlagStatus;
           resolved_by?: string | null;
+          resolved_at?: string | null;
+          resolution_note?: string | null;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["moderation_flags"]["Insert"]>;
@@ -590,6 +599,50 @@ export interface Database {
       };
       update_adoption_record: {
         Args: { p_cat_id: string; p_status: string; p_adopter_contact: string | null };
+        Returns: string;
+      };
+      update_user_role: {
+        Args: { p_user_id: string; p_role: UserRole; p_is_approved: boolean; p_org_id: string | null };
+        Returns: string;
+      };
+      approve_organization: {
+        Args: { p_org_id: string; p_note: string | null };
+        Returns: string;
+      };
+      reject_organization: {
+        Args: { p_org_id: string; p_note: string | null };
+        Returns: string;
+      };
+      hide_comment: {
+        Args: { p_comment_id: string; p_reason: string | null };
+        Returns: string;
+      };
+      unhide_comment: {
+        Args: { p_comment_id: string };
+        Returns: string;
+      };
+      review_moderation_flag: {
+        Args: { p_flag_id: string; p_action: ModerationAction; p_note: string | null };
+        Returns: string;
+      };
+      close_case: {
+        Args: { p_case_id: string; p_note: string | null };
+        Returns: string;
+      };
+      reopen_case: {
+        Args: { p_case_id: string; p_note: string | null };
+        Returns: string;
+      };
+      archive_case: {
+        Args: { p_case_id: string; p_note: string | null };
+        Returns: string;
+      };
+      reassign_case: {
+        Args: { p_case_id: string; p_new_claimed_by: string; p_note: string | null };
+        Returns: string;
+      };
+      release_claim: {
+        Args: { p_case_id: string; p_note: string | null };
         Returns: string;
       };
     };

@@ -229,3 +229,92 @@ export const moderationFlagSchema = z.object({
   details: z.string().trim().max(500).optional(),
 });
 export type ModerationFlagInput = z.infer<typeof moderationFlagSchema>;
+
+
+// ---------------------------------------------------------------------------
+// Admin: user role & approval (M5)
+// ---------------------------------------------------------------------------
+export const userRoleEnum = z.enum(["user", "volunteer", "org", "admin"]);
+
+export const updateUserRoleSchema = z.object({
+  userId: z.string().uuid(),
+  role: userRoleEnum,
+  isApproved: z.boolean(),
+  orgId: z.string().uuid().nullable().optional(),
+});
+export type UpdateUserRoleInput = z.infer<typeof updateUserRoleSchema>;
+
+// ---------------------------------------------------------------------------
+// Admin: organisation approval (M5)
+// ---------------------------------------------------------------------------
+export const approveOrganizationSchema = z.object({
+  orgId: z.string().uuid(),
+  note: z.string().trim().max(500).optional(),
+});
+export type ApproveOrganizationInput = z.infer<typeof approveOrganizationSchema>;
+
+export const rejectOrganizationSchema = z.object({
+  orgId: z.string().uuid(),
+  note: z.string().trim().max(500).optional(),
+});
+export type RejectOrganizationInput = z.infer<typeof rejectOrganizationSchema>;
+
+// ---------------------------------------------------------------------------
+// Admin: moderation flag review (M5)
+// ---------------------------------------------------------------------------
+export const moderationActionEnum = z.enum(["dismiss", "resolve", "hide_comment", "close_case"]);
+
+export const reviewModerationFlagSchema = z.object({
+  flagId: z.string().uuid(),
+  action: moderationActionEnum,
+  note: z.string().trim().max(500).optional(),
+});
+export type ReviewModerationFlagInput = z.infer<typeof reviewModerationFlagSchema>;
+
+// ---------------------------------------------------------------------------
+// Admin: comment hide/unhide (M5)
+// ---------------------------------------------------------------------------
+export const hideCommentSchema = z.object({
+  commentId: z.string().uuid(),
+  reason: z.string().trim().max(300).optional(),
+});
+export type HideCommentInput = z.infer<typeof hideCommentSchema>;
+
+export const unhideCommentSchema = z.object({
+  commentId: z.string().uuid(),
+});
+export type UnhideCommentInput = z.infer<typeof unhideCommentSchema>;
+
+// ---------------------------------------------------------------------------
+// Case governance (M5): close / reopen / archive / reassign / release claim
+// ---------------------------------------------------------------------------
+export const closeCaseSchema = z.object({
+  caseId: z.string().uuid(),
+  note: z.string().trim().max(500).optional(),
+});
+export type CloseCaseInput = z.infer<typeof closeCaseSchema>;
+
+export const reopenCaseSchema = z.object({
+  caseId: z.string().uuid(),
+  note: z.string().trim().max(500).optional(),
+});
+export type ReopenCaseInput = z.infer<typeof reopenCaseSchema>;
+
+export const archiveCaseSchema = z.object({
+  caseId: z.string().uuid(),
+  note: z.string().trim().max(500).optional(),
+});
+export type ArchiveCaseInput = z.infer<typeof archiveCaseSchema>;
+
+export const reassignCaseSchema = z.object({
+  caseId: z.string().uuid(),
+  newClaimedBy: z.string().uuid(),
+  note: z.string().trim().max(500).optional(),
+});
+export type ReassignCaseInput = z.infer<typeof reassignCaseSchema>;
+
+export const releaseClaimSchema = z.object({
+  caseId: z.string().uuid(),
+  note: z.string().trim().max(500).optional(),
+});
+export type ReleaseClaimInput = z.infer<typeof releaseClaimSchema>;

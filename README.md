@@ -9,13 +9,14 @@ coordinate feeding, TNR, medical care, and adoption — all on a privacy-first m
 > **Build status:** this repository currently implements **Milestone M0
 > (Foundation)**, **M1 (Data & Security Backbone)**, **M2 (Report Flow +
 > Storage + Live Map)**, **M3 (Matching Engine + Persistent Cat Profiles)**,
-> and **M4 (Volunteer Coordination, Feeding, TNR, Adoption, Community Case
-> Workflow)**. Volunteers and rescue organisations can now claim cases,
-> manage feeding schedules, track TNR progress, and move cats through
-> adoption stages; the community can comment, follow, and bookmark cat
-> profiles, with in-app notifications. Full admin moderation, organisation
-> approval, and final hardening land in later milestones. See "Milestone
-> status" below and `.kiro/specs/pawpin/spec.md`.
+> **M4 (Volunteer Coordination, Feeding, TNR, Adoption, Community Case
+> Workflow)**, and **M5 (Admin Moderation, Organisation Approval, Role
+> Management, Audit Logs, Case Governance)**. Admins can now approve
+> volunteers and organisations, manage user roles, review and act on
+> flagged content, hide/unhide comments, and govern cases (close, reopen,
+> archive, reassign, release claim) — every action leaves an audit trail.
+> Final security hardening, rate limiting, and submission polish land in
+> M6/M7. See "Milestone status" below and `.kiro/specs/pawpin/spec.md`.
 
 ---
 
@@ -105,6 +106,7 @@ Find the Supabase values in **Dashboard → Project Settings → API**.
    - `supabase/migrations/0007_matching.sql`
    - `supabase/migrations/0008_matching_rpcs.sql`
    - `supabase/migrations/0009_coordination.sql`
+   - `supabase/migrations/0010_admin_governance.sql`
 4. (Optional but recommended for the demo) run `supabase/seed.sql`.
 
 > Prefer the CLI? With the [Supabase CLI](https://supabase.com/docs/guides/cli)
@@ -113,7 +115,7 @@ Find the Supabase values in **Dashboard → Project Settings → API**.
 
 ### Demo accounts
 
-`seed.sql` creates four demo accounts (all password `PawPinDemo123`):
+`seed.sql` creates five demo accounts (all password `PawPinDemo123`):
 
 | Email | Role |
 |---|---|
@@ -121,8 +123,9 @@ Find the Supabase values in **Dashboard → Project Settings → API**.
 | `volunteer@pawpin.test` | Volunteer |
 | `org@pawpin.test` | Rescue organisation |
 | `admin@pawpin.test` | Admin |
+| `pending_volunteer@pawpin.test` | Volunteer, **pending approval** (M5 demo) |
 
-**If your project blocks direct `auth.users` inserts**, create the four accounts
+**If your project blocks direct `auth.users` inserts**, create the five accounts
 in **Dashboard → Authentication → Users → Add user** (mark emails confirmed),
 then run only the non-auth sections of `seed.sql`. The profile rows are created
 automatically by the `handle_new_user` trigger; a project admin can set the
@@ -231,12 +234,49 @@ immediately. With confirmation enabled, users must confirm via the emailed link
 - Any signed-in user can **comment** on a cat's profile (plain text only —
   comments are rendered as text, never as HTML), **follow** a cat to get
   notified about its updates, and **bookmark** a cat to find it again later.
+  Users can also **flag** a cat profile or a comment for admin review
+  (spam, inappropriate, duplicate, wrong info, abuse, other).
 - Follow/bookmark state is shown directly on the profile page ("✓ Following",
   "★ Bookmarked").
 - Notifications are simple and database-backed (no real-time infrastructure):
   a bell icon in the navbar shows unread in-app notifications, generated when
   a case a user follows is claimed, updated, changes status, or gets a new
   linked sighting.
+
+## How admin governance works
+
+- **Role & approval management** (`/admin/users`): an admin can change any
+  user's role (user/volunteer/org/admin) and approval status. An admin
+  **cannot demote their own account away from `admin`** — the role selector
+  is disabled entirely for your own row when you're an admin, and the
+  server-side RPC independently refuses the change even if the UI were
+  bypassed. Every change writes an audit log entry with the before/after
+  values.
+- **Organisation approval** (`/admin/organizations`): pending organisations
+  appear in a queue with approve/reject actions and an optional admin note.
+  Rejecting does not delete the organisation — it stays available to
+  correct and resubmit. Org users on an unapproved organisation see a clear
+  "pending approval" message instead of the org dashboard; volunteers on an
+  unapproved account see the same on their dashboard and cannot claim cases.
+- **Moderation flags** (`/admin/flags`): any signed-in user can report a cat
+  profile or a comment. Admins can dismiss, mark resolved, hide the
+  underlying comment, or close the associated case directly from the flag —
+  each action is recorded in the audit log.
+- **Comment hide/unhide**: hidden comments are excluded from every normal
+  viewer's query (including the comment's own author list for other users)
+  but remain visible — with a "Hidden" badge and an unhide control — to
+  admins. The comment text itself is never modified, only its visibility.
+- **Case governance**: admins and authorised carers (the claiming volunteer
+  or a member of the case's own organisation) can close, reopen, archive,
+  reassign, or release the claim on a case directly from the cat profile
+  page. Reopening only works from `closed`/`archived` — a case whose cat has
+  reached a genuinely resolved outcome (adopted/released) is corrected via
+  the adoption/TNR workflow instead, so governance actions never contradict
+  a resolved outcome.
+- **Audit log viewer** (`/admin/audit-logs`, admin-only, read-only): every
+  admin and case-governance action writes a row with the actor, action,
+  entity type/ID, a diff/summary, and a timestamp, filterable by action and
+  entity type.
 
 ## How image upload works
 
@@ -327,14 +367,22 @@ for the security model.
   with restricted adopter contact, comments/follow/bookmark, database-backed
   notifications with a navbar bell, real volunteer and organisation
   dashboards, and an upgraded case board with claim buttons and status badges.
-- ⏭️ **M5** dashboards + admin · **M6** hardening · **M7** docs/demo polish.
+- ✅ **M5 Admin Moderation, Organisation Approval, Role Management, Audit
+  Logs, Case Governance** — real admin dashboard (user/approval/flag/case
+  stats, recent audit logs, recent reports); role & approval management with
+  a self-demotion guard; organisation approval queue with admin notes;
+  moderation flag review (dismiss/resolve/hide comment/close case); comment
+  hide/unhide with hidden-status visible only to admins; case governance
+  (close/reopen/archive/reassign/release claim) available to admins and
+  authorised carers; a filterable, read-only audit log viewer.
+- ⏭️ **M6** hardening · **M7** docs/demo polish.
 
-## Known limitations (M4)
+## Known limitations (M5)
 
 - **Reporting requires an account.** Guest (unauthenticated) reporting is not
   implemented yet — the current RLS insert policies require `authenticated`.
   This is a deliberate, documented scope decision (see
-  `docs/security-report.md`); guest reporting is planned for M4.
+  `docs/security-report.md`); guest reporting is planned for M6.
 - **Matching is heuristic-assisted, not AI-verified.** The engine is a
   deterministic, explainable TypeScript module — never a claim of certain
   identification. An optional AI adapter skeleton exists
@@ -354,14 +402,17 @@ for the security model.
 - **No public geocoded address.** The "public area label" is a coarse
   coordinate-grid label, not a real place name (no external geocoding
   dependency by design).
+- **Reassign UI takes a raw user ID.** The cat profile's "Reassign…" control
+  currently asks for the target volunteer/org member's user ID directly
+  rather than offering a searchable picker of eligible users — functional,
+  but not yet polished. UI polish is planned for M7.
+- **No rate limiting on admin actions yet.** Role changes, approvals, and
+  moderation actions are correctly authorization-checked server-side but not
+  yet throttled; rate limiting across the app is planned for M6.
 - Volunteer/org/admin dashboards, feeding, TNR, adoption, comments, follows,
-  bookmarks, and notifications remain placeholders until M4/M5.
-- **Admin dashboard remains a placeholder** — full moderation, organisation
-  approval, and an audit log viewer are M5.
-- **No case reassignment UI yet.** Org members see unclaimed cases and can
-  claim them, but assigning a *specific* case to a *specific* volunteer
-  (beyond self-claiming) is not yet implemented — noted directly on the org
-  dashboard.
+  bookmarks, and notifications are fully implemented (M4/M5); final security
+  hardening (CSP headers, rate limiting) and submission polish remain for
+  M6/M7.
 - **Notifications are pull-based, not real-time.** The navbar bell fetches on
   page load and marks-all-read on open; there is no live/websocket push.
 - **`isAuthorisedCarer` on the cat profile page is a server-side

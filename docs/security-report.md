@@ -1,7 +1,7 @@
 # PawPin — Security Report
 
 This document describes PawPin's threat model and the controls implemented
-through Milestone M4. Security is a layered, defense-in-depth design with
+through Milestone M5. Security is a layered, defense-in-depth design with
 Postgres Row Level Security (RLS) as the authoritative boundary.
 
 ## 1. Threat model
@@ -9,16 +9,18 @@ Postgres Row Level Security (RLS) as the authoritative boundary.
 | Asset | Threat | Primary control |
 |---|---|---|
 | Precise cat locations | De-anonymising a stray's location enables harm (poisoning, abuse, theft) | RLS + SQL coordinate fuzzing; precise coords never exposed to guests/users, including during matching (see §4a) |
-| User accounts | Privilege escalation to volunteer/org/admin | Role set server-side only; `enforce_profile_guard` trigger blocks self-escalation |
+| User accounts | Privilege escalation to volunteer/org/admin | Role set server-side only; `enforce_profile_guard` trigger blocks self-escalation; `update_user_role` RPC additionally blocks an admin from demoting themselves (see §4c) |
 | Adopter contact info (PII) | Unauthorised access | RLS restricts `adoptions` to admins/authorised carers; never rendered back by the UI (see §4b) |
 | Uploaded photos | Embedded EXIF/GPS leaks location | MIME/size/magic-byte validation now; full EXIF stripping is **planned hardening** (see §4) |
 | User content | XSS via comments/notes | Stored + rendered as plain text; no `dangerouslySetInnerHTML` |
 | Service role key | Full DB access if leaked to client | `server-only` import guard; never referenced in client bundles |
-| Sensitive actions | Undetected abuse | Audit logging via DB triggers (insert-only, admin-read) |
+| Sensitive actions | Undetected abuse | Audit logging via DB triggers (insert-only, admin-read) plus explicit admin-action logging (see §4c) |
 | Unauthenticated report spam | Abuse via anonymous submissions | Reporting requires authentication (see §6) |
 | Match suggestion tampering | A user linking a sighting to an unrelated/arbitrary cat, or forging a "confirmed" decision | Server-side re-validation (Zod) + RLS ownership checks on the sighting before any link/create action executes; decisions are always attributed to `auth.uid()` server-side, never client-supplied |
-| Unauthorised case claiming | A normal registered user claiming a case, or a volunteer stealing another volunteer's claim | `claim_case` RPC checks the caller's role server-side and rejects re-claiming by a different, non-admin/non-org volunteer (see §4b) |
+| Unauthorised case claiming | A normal registered user claiming a case, an unapproved volunteer claiming one, or a volunteer stealing another volunteer's claim | `claim_case` RPC checks the caller's role *and* approval status server-side and rejects re-claiming by a different, non-admin/non-org volunteer (see §4b/§4c) |
 | Coordination write forgery | A user calling `add_case_update`/feeding/TNR/adoption RPCs directly for a case they have no access to | Every RPC independently checks `has_case_access`/`has_cat_access` or admin before writing anything (see §4b) |
+| Admin action forgery | A non-admin calling `update_user_role`/`approve_organization`/`review_moderation_flag`/case-governance RPCs directly | Every M5 RPC independently checks `is_admin()` (or, for case governance, `is_admin() or has_case_access(...)`) server-side before writing anything (see §4c) |
+| Moderation bypass | A user editing/deleting a hidden comment's text, or re-showing it themselves | `is_hidden` is admin-only writable (`comments_moderate` RLS + the `hide_comment`/`unhide_comment` RPCs); comment `body` is never modified by moderation, only visibility |
 
 ## 2. Authentication
 
@@ -31,8 +33,8 @@ Postgres Row Level Security (RLS) as the authoritative boundary.
 
 RLS is enabled on **every** table (`supabase/migrations/0004_rls.sql`,
 extended by `0006_report_flow.sql`, `0007_matching.sql`, `0008_matching_rpcs.sql`,
-and `0009_coordination.sql`). Access is resolved through `SECURITY DEFINER`
-helper functions with a pinned `search_path`:
+`0009_coordination.sql`, and `0010_admin_governance.sql`). Access is resolved
+through `SECURITY DEFINER` helper functions with a pinned `search_path`:
 
 - `current_user_role()`, `is_admin()`, `is_volunteer()`, `is_org()`
 - `has_case_access(case_id)` — admin, the claiming volunteer, or an org member
@@ -80,9 +82,15 @@ Highlights:
   remains a **direct table write** (no RPC) — see §4b for why that's safe.
 - **follows/bookmarks/notifications** — strictly `user_id = auth.uid()`; also
   direct table writes for the same reason.
-- **moderation_flags** — authenticated users file reports; only admins read/resolve.
+- **moderation_flags** — authenticated users file reports; only admins
+  read/resolve. Direct client `update` (e.g. changing `status`) is
+  admin-only; the legitimate review writes go through `review_moderation_flag`
+  (§4c).
 - **audit_logs** — admin-read only; no client insert/update/delete policy, so
-  rows are written exclusively by the `SECURITY DEFINER` audit trigger.
+  rows are written exclusively by the `SECURITY DEFINER` audit trigger and
+  the M5 admin RPCs (both run as `SECURITY DEFINER`, bypassing the "no client
+  insert" restriction only because they are privileged server-side code, not
+  because the policy was relaxed).
 
 ## 4a. Matching engine privacy boundary
 
@@ -158,6 +166,61 @@ they explicitly query the database directly (which itself remains
 RLS-gated to admin/`has_cat_access`). The public cat profile only ever reads
 `adoptions.status`, never `adopter_contact`.
 
+## 4c. Admin governance RPC security (M5)
+
+Role/approval changes, organisation approval, moderation flag review,
+comment hide/unhide, and case governance (close/reopen/archive/reassign/
+release claim) are the highest-privilege writes in the app. Each is a
+`SECURITY DEFINER` RPC (migration 0010) that independently re-verifies
+authorization — never trusting that the caller reached the RPC through the
+admin UI:
+
+- **`update_user_role`** checks `is_admin()`, then additionally refuses to
+  let the caller change **their own** role away from `admin` — even an admin
+  calling this RPC directly on their own `user_id` with a different role is
+  rejected. This is the self-demotion guard; it exists purely to prevent an
+  admin from accidentally locking themselves out of admin tooling, not as a
+  security boundary against a malicious admin (an admin can still demote
+  *other* admins, by design).
+- **`approve_organization` / `reject_organization`** check `is_admin()`.
+  Rejecting never deletes the organisation row — `is_approved` is set to
+  `false` with an `admin_note`, preserving history and allowing resubmission.
+- **`review_moderation_flag`** checks `is_admin()`, then validates the
+  requested `action` is one of the four allowed values and, for
+  `hide_comment`/`close_case`, that the flag's `target_type` actually matches
+  (a `close_case` action on a `comment`-type flag is rejected, not silently
+  ignored).
+- **`hide_comment` / `unhide_comment`** check `is_admin()`. Comment `body` is
+  never touched — only `is_hidden`. Because `comments_select` RLS already
+  excludes hidden comments from non-admin, non-author viewers, hiding is
+  effective immediately and requires no additional application-layer
+  filtering (the cat profile page's comment query conditionally omits the
+  `is_hidden = false` filter only when the *viewer* is an admin — a normal
+  user's query is always filtered, regardless of what the server component
+  "knows").
+- **Case governance RPCs** (`close_case`, `reopen_case`, `archive_case`,
+  `reassign_case`, `release_claim`) check `is_admin() or has_case_access(...)`
+  — broader than admin-only, matching the spec's "admins and authorised
+  orgs" requirement, but still never open to an arbitrary caller.
+  `reassign_case` additionally validates the target user's role
+  (volunteer/org/admin) before assigning, so a case cannot be "reassigned" to
+  a plain registered user by mistake or by a crafted request.
+- **Every RPC above writes an explicit `audit_logs` row** via
+  `log_admin_action(action, entity, entity_id, diff)` — a `SECURITY DEFINER`
+  helper with no client-facing grant of its own; it can only be reached
+  through the RPCs that call it, so the audit trail cannot be skipped or
+  written by a client-supplied entry.
+- **Every RPC is granted `EXECUTE` to `authenticated` only**, with
+  `REVOKE ALL FROM PUBLIC` applied first — never `anon`.
+
+**UI-level reinforcement, not the security boundary:** `RoleEditor` disables
+the role `<select>` entirely for the signed-in admin's own row, and admin
+pages call `requireRole(["admin"])` before rendering. Both are legitimate
+defense-in-depth (a non-admin never even sees the admin UI, and an admin
+never sees a self-demotion control to click) but the actual authorization
+guarantee is the RPC's own `is_admin()`/`has_case_access(...)` check, which
+holds even if a request bypassed the UI entirely.
+
 ## 4. Location privacy & EXIF
 
 - Precise coordinates live only in `sightings.lat/lng`.
@@ -209,13 +272,13 @@ RLS-gated to admin/`has_cat_access`). The public cat profile only ever reads
   as the rest of `sightings`/case data) — never shown publicly.
 - **Reporting currently requires an authenticated account.** The `sightings`,
   `cats`, and `cases` insert policies check `auth.uid()`. We deliberately did
-  **not** relax these to accept anonymous (`anon`) inserts for M2/M3: doing so
+  **not** relax these to accept anonymous (`anon`) inserts: doing so
   safely would require either (a) accepting `reporter_id IS NULL` rows from
   `anon`, which removes all accountability and invites spam/abuse with no rate
   limiting in place yet, or (b) routing guest submissions through a
   service-role endpoint, which bypasses RLS entirely and needs its own abuse
   controls we have not built. Rather than ship either unsafely, guest
-  reporting is deferred to M5 alongside the abuse-mitigation work
+  reporting is deferred to M6 alongside the abuse-mitigation work
   (rate limiting, CAPTCHA) listed in §8.
 
 ## 7. Secrets hygiene
@@ -225,11 +288,11 @@ RLS-gated to admin/`has_cat_access`). The public cat profile only ever reads
   (used by both `src/lib/supabase/admin.ts` and `src/lib/storage/catPhotos.ts`).
 - Next.js was pinned to a patched 14.2.x release to avoid a known advisory.
 
-## 8. Known gaps / planned (M5/M6)
+## 8. Known gaps / planned (M6)
 
 - **EXIF/GPS metadata stripping** — see §4. Highest-priority gap.
 - Guest (unauthenticated) reporting — see §6.
-- Rate limiting on report/comment/matching-decision/coordination endpoints.
+- Rate limiting on report/comment/matching-decision/coordination/admin endpoints.
 - CAPTCHA / abuse throttling for anonymous reporting (once guest reporting ships).
 - Automated RLS policy test suite (currently a manual per-role checklist —
   see `docs/testing.md`).
@@ -239,10 +302,6 @@ RLS-gated to admin/`has_cat_access`). The public cat profile only ever reads
   milestone, it will need its own input validation (image size/type limits
   before sending to an external API) and error handling so a third-party
   outage never blocks the deterministic matching path.
-- **Admin moderation, organisation approval, and an audit-log viewer are M5.**
-  Comments can be flagged (`moderation_flags`) but there is no admin UI yet
-  to resolve flags or hide content — the underlying RLS and table support
-  already exist from M1.
-- **No case reassignment.** An org member can only see and self-claim
-  unclaimed cases from the case board; assigning a specific case to a
-  specific volunteer is not implemented.
+- **Case reassignment UI takes a raw user ID**, not a searchable picker of
+  eligible users. The RPC's authorization/validation is complete; only the
+  UI convenience is deferred, to M7 polish.

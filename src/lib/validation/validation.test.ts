@@ -18,6 +18,17 @@ import {
   adoptionSchema,
   followCatSchema,
   bookmarkCatSchema,
+  updateUserRoleSchema,
+  approveOrganizationSchema,
+  rejectOrganizationSchema,
+  reviewModerationFlagSchema,
+  hideCommentSchema,
+  unhideCommentSchema,
+  closeCaseSchema,
+  reopenCaseSchema,
+  archiveCaseSchema,
+  reassignCaseSchema,
+  releaseClaimSchema,
 } from "@/lib/validation/schemas";
 
 describe("validateImageFile", () => {
@@ -346,5 +357,109 @@ describe("commentSchema (plain text contract)", () => {
     if (result.success) {
       expect(result.data.body).toBe("<script>alert(1)</script>");
     }
+  });
+});
+
+describe("updateUserRoleSchema", () => {
+  it("rejects an invalid role", () => {
+    const result = updateUserRoleSchema.safeParse({
+      userId: "11111111-1111-1111-1111-111111111111",
+      role: "superadmin",
+      isApproved: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a valid role update", () => {
+    const result = updateUserRoleSchema.safeParse({
+      userId: "11111111-1111-1111-1111-111111111111",
+      role: "volunteer",
+      isApproved: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("requires isApproved to be a boolean", () => {
+    const result = updateUserRoleSchema.safeParse({
+      userId: "11111111-1111-1111-1111-111111111111",
+      role: "volunteer",
+      isApproved: "yes",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("approveOrganizationSchema / rejectOrganizationSchema", () => {
+  it("requires a valid org UUID", () => {
+    expect(approveOrganizationSchema.safeParse({ orgId: "not-a-uuid" }).success).toBe(false);
+    expect(rejectOrganizationSchema.safeParse({ orgId: "not-a-uuid" }).success).toBe(false);
+  });
+
+  it("accepts a valid org id with an optional note", () => {
+    const orgId = "11111111-1111-1111-1111-111111111111";
+    expect(approveOrganizationSchema.safeParse({ orgId, note: "Looks legitimate" }).success).toBe(true);
+    expect(rejectOrganizationSchema.safeParse({ orgId, note: "Missing contact info" }).success).toBe(true);
+  });
+
+  it("accepts a valid org id with no note", () => {
+    const orgId = "11111111-1111-1111-1111-111111111111";
+    expect(approveOrganizationSchema.safeParse({ orgId }).success).toBe(true);
+  });
+});
+
+describe("reviewModerationFlagSchema", () => {
+  it("rejects an invalid action", () => {
+    const result = reviewModerationFlagSchema.safeParse({
+      flagId: "11111111-1111-1111-1111-111111111111",
+      action: "delete_everything",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts each valid action", () => {
+    const flagId = "11111111-1111-1111-1111-111111111111";
+    for (const action of ["dismiss", "resolve", "hide_comment", "close_case"]) {
+      expect(reviewModerationFlagSchema.safeParse({ flagId, action }).success).toBe(true);
+    }
+  });
+});
+
+describe("hideCommentSchema / unhideCommentSchema", () => {
+  it("requires a valid comment UUID", () => {
+    expect(hideCommentSchema.safeParse({ commentId: "not-a-uuid" }).success).toBe(false);
+    expect(unhideCommentSchema.safeParse({ commentId: "not-a-uuid" }).success).toBe(false);
+  });
+
+  it("accepts a valid comment id, reason optional", () => {
+    const commentId = "11111111-1111-1111-1111-111111111111";
+    expect(hideCommentSchema.safeParse({ commentId }).success).toBe(true);
+    expect(hideCommentSchema.safeParse({ commentId, reason: "Spam" }).success).toBe(true);
+    expect(unhideCommentSchema.safeParse({ commentId }).success).toBe(true);
+  });
+});
+
+describe("case governance schemas (close/reopen/archive/reassign/release)", () => {
+  const caseId = "11111111-1111-1111-1111-111111111111";
+
+  it("close/reopen/archive/release all require a valid case UUID", () => {
+    expect(closeCaseSchema.safeParse({ caseId: "bad" }).success).toBe(false);
+    expect(reopenCaseSchema.safeParse({ caseId: "bad" }).success).toBe(false);
+    expect(archiveCaseSchema.safeParse({ caseId: "bad" }).success).toBe(false);
+    expect(releaseClaimSchema.safeParse({ caseId: "bad" }).success).toBe(false);
+  });
+
+  it("close/reopen/archive/release accept a valid case id with optional note", () => {
+    expect(closeCaseSchema.safeParse({ caseId }).success).toBe(true);
+    expect(reopenCaseSchema.safeParse({ caseId, note: "Reopening after review" }).success).toBe(true);
+    expect(archiveCaseSchema.safeParse({ caseId }).success).toBe(true);
+    expect(releaseClaimSchema.safeParse({ caseId }).success).toBe(true);
+  });
+
+  it("reassignCaseSchema requires both caseId and newClaimedBy as valid UUIDs", () => {
+    expect(reassignCaseSchema.safeParse({ caseId, newClaimedBy: "bad" }).success).toBe(false);
+    expect(reassignCaseSchema.safeParse({ caseId }).success).toBe(false);
+    expect(
+      reassignCaseSchema.safeParse({ caseId, newClaimedBy: "22222222-2222-2222-2222-222222222222" }).success
+    ).toBe(true);
   });
 });

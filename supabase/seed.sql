@@ -1,13 +1,13 @@
 -- ===========================================================================
 -- PawPin seed.sql — demo data for judges
 -- ===========================================================================
--- Run AFTER migrations 0001–0009, in the Supabase SQL Editor (runs as the
+-- Run AFTER migrations 0001–0010, in the Supabase SQL Editor (runs as the
 -- postgres superuser, which bypasses RLS — correct for seeding).
 --
--- This seed creates four demo auth users with known passwords. If your
--- Supabase project disallows direct auth.users inserts, see README.md for the
--- manual "create accounts in the dashboard, then run the profile section"
--- fallback.
+-- This seed creates five demo auth users with known passwords (four core
+-- roles + one pending volunteer). If your Supabase project disallows direct
+-- auth.users inserts, see README.md for the manual "create accounts in the
+-- dashboard, then run the profile section" fallback.
 --
 -- Matching demo (M3): cat #1 (orange tabby) has three prior sightings close
 -- together in time/place, PLUS a fourth, still-PENDING sighting with a
@@ -27,11 +27,26 @@
 -- notifications are seeded across several cats to exercise the community
 -- features and the notifications dropdown immediately.
 --
+-- Governance demo (M5): `pending_volunteer@pawpin.test` is an UNAPPROVED
+-- volunteer account — sign in as admin@pawpin.test and visit /admin/users to
+-- approve them (or leave unapproved to see the "pending approval" dashboard
+-- message when signed in as that account). "Alley Cat Rescue 2" is an
+-- UNAPPROVED organisation — visit /admin/organizations to approve/reject it.
+-- Two open moderation flags exist (one on a comment, one on a cat profile) —
+-- visit /admin/flags to dismiss/resolve/hide-comment/close-case. Cat #2's
+-- second comment is pre-HIDDEN (is_hidden=true) to demonstrate that normal
+-- users don't see it while admins do (with an Unhide control). Case #4
+-- (grey cat, medical) is a good candidate to demonstrate reassignment,
+-- close, and archive from its cat profile's case-governance controls.
+-- Several explicit audit_logs rows are seeded so /admin/audit-logs has
+-- filterable content immediately.
+--
 -- Demo credentials (ALL demo-only — never use in production):
---   user@pawpin.test       / PawPinDemo123
---   volunteer@pawpin.test  / PawPinDemo123
---   org@pawpin.test        / PawPinDemo123
---   admin@pawpin.test      / PawPinDemo123
+--   user@pawpin.test            / PawPinDemo123
+--   volunteer@pawpin.test       / PawPinDemo123
+--   org@pawpin.test             / PawPinDemo123
+--   admin@pawpin.test           / PawPinDemo123
+--   pending_volunteer@pawpin.test / PawPinDemo123
 -- ===========================================================================
 
 begin;
@@ -71,6 +86,11 @@ values
    'authenticated', 'authenticated', 'admin@pawpin.test',
    crypt('PawPinDemo123', gen_salt('bf')), now(),
    '{"provider":"email","providers":["email"]}', '{"display_name":"Demo Admin"}',
+   now(), now(), '', '', '', ''),
+  ('00000000-0000-0000-0000-000000000000', '55555555-5555-5555-5555-555555555555',
+   'authenticated', 'authenticated', 'pending_volunteer@pawpin.test',
+   crypt('PawPinDemo123', gen_salt('bf')), now(),
+   '{"provider":"email","providers":["email"]}', '{"display_name":"Pending Volunteer"}',
    now(), now(), '', '', '', '')
 on conflict (id) do nothing;
 
@@ -86,7 +106,9 @@ values
   (gen_random_uuid(), '33333333-3333-3333-3333-333333333333', 'org@pawpin.test',
    '{"sub":"33333333-3333-3333-3333-333333333333","email":"org@pawpin.test"}', 'email', now(), now(), now()),
   (gen_random_uuid(), '44444444-4444-4444-4444-444444444444', 'admin@pawpin.test',
-   '{"sub":"44444444-4444-4444-4444-444444444444","email":"admin@pawpin.test"}', 'email', now(), now(), now())
+   '{"sub":"44444444-4444-4444-4444-444444444444","email":"admin@pawpin.test"}', 'email', now(), now(), now()),
+  (gen_random_uuid(), '55555555-5555-5555-5555-555555555555', 'pending_volunteer@pawpin.test',
+   '{"sub":"55555555-5555-5555-5555-555555555555","email":"pending_volunteer@pawpin.test"}', 'email', now(), now(), now())
 on conflict do nothing;
 
 -- The handle_new_user() trigger created public.profiles rows (role='user').
@@ -101,6 +123,12 @@ values ('a0000000-0000-0000-0000-000000000001', 'Alley Cat Rescue',
         'contact@alleycatrescue.test', true, '44444444-4444-4444-4444-444444444444')
 on conflict (id) do nothing;
 
+-- A second, PENDING organisation for the M5 approval-queue demo.
+insert into public.organizations (id, name, contact_email, is_approved)
+values ('a0000000-0000-0000-0000-000000000002', 'Paws & Whiskers Rescue',
+        'hello@pawswhiskers.test', false)
+on conflict (id) do nothing;
+
 alter table public.profiles disable trigger trg_profile_guard;
 
 update public.profiles set display_name = 'Demo User', role = 'user'
@@ -112,6 +140,11 @@ update public.profiles set display_name = 'Alley Cat Rescue', role = 'org',
   where id = '33333333-3333-3333-3333-333333333333';
 update public.profiles set display_name = 'Demo Admin', role = 'admin'
   where id = '44444444-4444-4444-4444-444444444444';
+-- PENDING volunteer: role set but is_approved=false, for the M5
+-- approval-queue demo. This account will see a "pending approval" message on
+-- /dashboard/volunteer and cannot claim cases until an admin approves it.
+update public.profiles set display_name = 'Pending Volunteer', role = 'volunteer', is_approved = false
+  where id = '55555555-5555-5555-5555-555555555555';
 
 alter table public.profiles enable trigger trg_profile_guard;
 
@@ -157,7 +190,17 @@ values
   -- Released after TNR.
   ('c0000000-0000-0000-0000-000000000007', 'released', 'tabby', 'tabby', 'medium', 'adult',
    array['tipped left ear'], true, null,
-   now() - interval '90 days', now() - interval '40 days', '33333333-3333-3333-3333-333333333333')
+   now() - interval '90 days', now() - interval '40 days', '33333333-3333-3333-3333-333333333333'),
+  -- Closed (governance demo): a case an admin formally closed without an
+  -- adoption/release outcome, e.g. the reporter never saw the cat again.
+  ('c0000000-0000-0000-0000-000000000008', 'closed', 'white', 'solid', 'medium', 'adult',
+   array[]::text[], false, null,
+   now() - interval '25 days', now() - interval '20 days', '11111111-1111-1111-1111-111111111111'),
+  -- Archived (governance demo): a stale/duplicate report set aside by an
+  -- admin, distinct from a resolved "closed" outcome.
+  ('c0000000-0000-0000-0000-000000000009', 'archived', 'grey', 'tabby', 'small', 'adult',
+   array[]::text[], false, null,
+   now() - interval '35 days', now() - interval '30 days', '22222222-2222-2222-2222-222222222222')
 on conflict (id) do nothing;
 
 -- ---------------------------------------------------------------------------
@@ -172,6 +215,13 @@ values
   ('d0000000-0000-0000-0000-000000000004', 'c0000000-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', 'b0000000-0000-0000-0000-000000000002', 1.353400, 103.821000, 'low', array['ear-tipped'], 'Calico resting by the carpark.', now() - interval '5 days'),
   ('d0000000-0000-0000-0000-000000000005', 'c0000000-0000-0000-0000-000000000003', '22222222-2222-2222-2222-222222222222', 'b0000000-0000-0000-0000-000000000003', 1.350800, 103.818900, 'medium', array['friendly','healthy'], 'Young tuxedo, very social.', now() - interval '1 days'),
   ('d0000000-0000-0000-0000-000000000006', 'c0000000-0000-0000-0000-000000000005', '11111111-1111-1111-1111-111111111111', null, 1.354000, 103.822000, 'critical', array['very young','alone'], 'Tiny black kitten alone, needs help.', now() - interval '3 days')
+on conflict (id) do nothing;
+
+-- Sightings for the two case-governance demo cats (#8 closed, #9 archived).
+insert into public.sightings (id, cat_id, reporter_id, photo_id, lat, lng, urgency, condition_tags, notes, created_at)
+values
+  ('d0000000-0000-0000-0000-000000000008', 'c0000000-0000-0000-0000-000000000008', '11111111-1111-1111-1111-111111111111', null, 1.349000, 103.817000, 'medium', array['friendly'], 'White cat near the market, only seen once.', now() - interval '25 days'),
+  ('d0000000-0000-0000-0000-000000000009', 'c0000000-0000-0000-0000-000000000009', '22222222-2222-2222-2222-222222222222', null, 1.355500, 103.823500, 'low', array[]::text[], 'Possibly a duplicate of an earlier report.', now() - interval '35 days')
 on conflict (id) do nothing;
 
 -- ---------------------------------------------------------------------------
@@ -199,7 +249,13 @@ values
    now() - interval '58 days', now() - interval '10 days'),
   ('e0000000-0000-0000-0000-000000000007', 'c0000000-0000-0000-0000-000000000007', 'released',
    '22222222-2222-2222-2222-222222222222', 'a0000000-0000-0000-0000-000000000001', 'low',
-   now() - interval '88 days', now() - interval '40 days')
+   now() - interval '88 days', now() - interval '40 days'),
+  -- Closed (governance demo): admin-closed, no adoption/release outcome.
+  ('e0000000-0000-0000-0000-000000000008', 'c0000000-0000-0000-0000-000000000008', 'closed',
+   null, null, 'medium', now() - interval '25 days', now() - interval '20 days'),
+  -- Archived (governance demo): stale/duplicate, set aside by an admin.
+  ('e0000000-0000-0000-0000-000000000009', 'c0000000-0000-0000-0000-000000000009', 'archived',
+   null, null, 'low', now() - interval '35 days', now() - interval '30 days')
 on conflict (id) do nothing;
 
 -- ---------------------------------------------------------------------------
@@ -211,7 +267,9 @@ values
   ('e0000000-0000-0000-0000-000000000001', 'claimed',   '22222222-2222-2222-2222-222222222222', '{"note":"Volunteer claimed the case"}', now() - interval '28 days'),
   ('e0000000-0000-0000-0000-000000000001', 'status_change', '22222222-2222-2222-2222-222222222222', '{"from":"reported","to":"active"}', now() - interval '27 days'),
   ('e0000000-0000-0000-0000-000000000002', 'tnr_update', '22222222-2222-2222-2222-222222222222', '{"note":"Scheduled for trapping"}', now() - interval '16 days'),
-  ('e0000000-0000-0000-0000-000000000004', 'medical',   '33333333-3333-3333-3333-333333333333', '{"note":"Vet visit arranged for leg injury"}', now() - interval '8 days');
+  ('e0000000-0000-0000-0000-000000000004', 'medical',   '33333333-3333-3333-3333-333333333333', '{"note":"Vet visit arranged for leg injury"}', now() - interval '8 days'),
+  ('e0000000-0000-0000-0000-000000000008', 'case_closed', '44444444-4444-4444-4444-444444444444', '{"message":"Case closed — reporter no longer sees the cat in the area"}', now() - interval '20 days'),
+  ('e0000000-0000-0000-0000-000000000009', 'case_archived', '44444444-4444-4444-4444-444444444444', '{"message":"Archived as a likely duplicate report"}', now() - interval '30 days');
 
 -- ---------------------------------------------------------------------------
 -- 8) Feeding schedule + logs.
@@ -250,14 +308,15 @@ values
    now() - interval '10 days', '33333333-3333-3333-3333-333333333333');
 
 -- ---------------------------------------------------------------------------
--- 11) Comments (plain text).
+-- 11) Comments (plain text). One is pre-HIDDEN for the M5 moderation demo.
 -- ---------------------------------------------------------------------------
-insert into public.comments (cat_id, author_id, body)
+insert into public.comments (cat_id, author_id, body, is_hidden)
 values
-  ('c0000000-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'I see this orange cat near my block most evenings.'),
-  ('c0000000-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', 'Thanks! I have started a feeding schedule and am watching the limp.'),
-  ('c0000000-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', 'Such a friendly tuxedo — hope it finds a home soon!'),
-  ('c0000000-0000-0000-0000-000000000005', '11111111-1111-1111-1111-111111111111', 'Is anyone able to check on this kitten today? It looked very small and alone.');
+  ('c0000000-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'I see this orange cat near my block most evenings.', false),
+  ('c0000000-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', 'Thanks! I have started a feeding schedule and am watching the limp.', false),
+  ('c0000000-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', 'Such a friendly tuxedo — hope it finds a home soon!', false),
+  ('c0000000-0000-0000-0000-000000000005', '11111111-1111-1111-1111-111111111111', 'Is anyone able to check on this kitten today? It looked very small and alone.', false),
+  ('c0000000-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', 'Buy cheap supplements at scam-site.example — not related to this cat!', true);
 
 -- ---------------------------------------------------------------------------
 -- 12) Follows & bookmarks.
@@ -291,11 +350,26 @@ values
    '{"cat_id":"c0000000-0000-0000-0000-000000000001","message":"New sighting logged for a cat you are caring for."}');
 
 -- ---------------------------------------------------------------------------
--- 14) Moderation flag (audit trigger logs this).
+-- 14) Moderation flags. Two OPEN flags (one on the hidden-comment example,
+--     one on a cat profile) for the /admin/flags review demo, plus one
+--     already-resolved example so "Recently reviewed" has content too.
 -- ---------------------------------------------------------------------------
 insert into public.moderation_flags (target_type, target_id, reason, details, reported_by, status)
-values ('comment', (select id from public.comments limit 1), 'spam',
-        'Example flag for the admin moderation demo.', '11111111-1111-1111-1111-111111111111', 'open');
+values
+  ('comment',
+   (select id from public.comments where body like 'Buy cheap supplements%' limit 1),
+   'spam', 'This comment looks like spam unrelated to the cat.',
+   '11111111-1111-1111-1111-111111111111', 'open'),
+  ('cat', 'c0000000-0000-0000-0000-000000000004', 'wrong_info',
+   'Not sure this cat''s condition tags are accurate — might need a second look.',
+   '22222222-2222-2222-2222-222222222222', 'open');
+
+insert into public.moderation_flags (target_type, target_id, reason, details, reported_by, status, resolved_by, resolved_at, resolution_note)
+values
+  ('comment', (select id from public.comments where cat_id = 'c0000000-0000-0000-0000-000000000001' limit 1),
+   'duplicate', 'Reported by mistake, same as another comment.',
+   '11111111-1111-1111-1111-111111111111', 'dismissed',
+   '44444444-4444-4444-4444-444444444444', now() - interval '1 day', 'Not actually a duplicate — dismissed.');
 
 -- ---------------------------------------------------------------------------
 -- 15) Pre-computed match suggestions (orange tabby) so the matching screen
@@ -338,10 +412,30 @@ values
 on conflict do nothing;
 
 -- ---------------------------------------------------------------------------
--- 16) Explicit audit log example (in addition to trigger-generated rows).
+-- 16) Explicit audit log examples (in addition to trigger-generated rows).
+--     These mirror what the M5 admin RPCs write via log_admin_action(), so
+--     /admin/audit-logs has realistic, filterable content immediately.
 -- ---------------------------------------------------------------------------
-insert into public.audit_logs (actor_id, action, entity, entity_id, diff)
-values ('44444444-4444-4444-4444-444444444444', 'SEED', 'system', null,
-        '{"note":"Demo data seeded"}');
+insert into public.audit_logs (actor_id, action, entity, entity_id, diff, created_at)
+values
+  ('44444444-4444-4444-4444-444444444444', 'SEED', 'system', null,
+   '{"note":"Demo data seeded"}', now() - interval '30 days'),
+  ('44444444-4444-4444-4444-444444444444', 'update_user_role', 'profiles',
+   '22222222-2222-2222-2222-222222222222',
+   '{"before":{"role":"user","is_approved":true},"after":{"role":"volunteer","is_approved":true}}',
+   now() - interval '29 days'),
+  ('44444444-4444-4444-4444-444444444444', 'approve_organization', 'organizations',
+   'a0000000-0000-0000-0000-000000000001',
+   '{"note":"Verified contact details by phone"}', now() - interval '29 days'),
+  ('44444444-4444-4444-4444-444444444444', 'close_case', 'cases',
+   'e0000000-0000-0000-0000-000000000008',
+   '{"note":"Reporter no longer sees the cat in the area"}', now() - interval '20 days'),
+  ('44444444-4444-4444-4444-444444444444', 'archive_case', 'cases',
+   'e0000000-0000-0000-0000-000000000009',
+   '{"note":"Archived as a likely duplicate report"}', now() - interval '30 days'),
+  ('44444444-4444-4444-4444-444444444444', 'review_moderation_flag', 'moderation_flags',
+   (select id from public.moderation_flags where status = 'dismissed' limit 1),
+   '{"action":"dismiss","note":"Not actually a duplicate — dismissed.","target_type":"comment"}',
+   now() - interval '1 day');
 
 commit;

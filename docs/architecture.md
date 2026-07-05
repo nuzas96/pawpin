@@ -59,7 +59,10 @@ Core entities:
   (`status`: not_available → intake → available → application_received →
   matched → adopted, adopter contact restricted by RLS) — the M4 workflows.
 - **comments** (plain text), **follows**, **bookmarks**, **notifications**.
-- **moderation_flags**, **audit_logs** (insert-only, admin-read).
+- **moderation_flags** (`status`: open → reviewing → dismissed/resolved,
+  plus `resolved_by`/`resolved_at`/`resolution_note`), **audit_logs**
+  (insert-only from the client's perspective; written by both the M1 DML
+  trigger and, for admin actions, the M5 `log_admin_action` helper).
 - **match_suggestions** — persisted matching output + human-confirmation trail
   (`decision`: `pending` | `linked` | `rejected` | `new_profile_created`,
   plus `confirmed_by`/`confirmed_at`).
@@ -260,6 +263,72 @@ opens. There is no real-time/websocket layer in this milestone (see §8).
 components built entirely from real queries — claimed cases, unclaimed
 urgent cases, active feeding schedules, in-progress TNR records, and (for
 org) a status-count pipeline for TNR and adoption — with no mocked data.
+Both dashboards also gate on `profiles.is_approved` for their own role
+(volunteer/org) — an unapproved account sees an explanatory pending-approval
+message instead of the dashboard content (see §3f).
+
+## 3f. Admin governance: roles, org approval, moderation, case governance, audit logs (M5)
+
+M5 completes PawPin's trust/safety layer. Every write here follows the same
+`SECURITY DEFINER` RPC pattern as M4 (migration 0010): each function performs
+its own authorization check, all related writes atomically, and — new in
+M5 — an explicit `audit_logs` row via a shared `log_admin_action(...)` helper
+(distinct from the M1 trigger-based audit logging, which only fires on
+`cases`/`moderation_flags`/`adoptions`/`tnr_records` DML and captures a raw
+row dump rather than a purpose-built summary).
+
+- **`update_user_role(user_id, role, is_approved, org_id)`** — admin-only.
+  Refuses to let an admin remove **their own** `admin` role (self-demotion
+  guard) — an admin can still change *other* admins' roles. The UI
+  (`RoleEditor`) reinforces this by disabling the role `<select>` entirely
+  for your own row, so the guard is visible before a request is even sent,
+  not just enforced after.
+- **`approve_organization` / `reject_organization`** — admin-only. Rejecting
+  sets `is_approved = false` with an `admin_note` rather than deleting the
+  row, so a rejected organisation can be corrected and resubmitted with full
+  history intact.
+- **`review_moderation_flag(flag_id, action, note)`** — admin-only, four
+  actions: `dismiss`, `resolve`, `hide_comment` (requires a comment-type
+  flag; also hides the underlying comment), `close_case` (requires a
+  cat-type flag; closes the cat's most recent case and appends a
+  `case_events` row). The flag's `status`/`resolved_by`/`resolved_at`/
+  `resolution_note` update and any side effect happen in the same
+  transaction.
+- **`hide_comment` / `unhide_comment`** — admin-only. Comment **text is never
+  modified**, only `is_hidden`; `comments_select` RLS (unchanged since M1)
+  already excludes hidden comments from non-admin, non-author viewers, so
+  hiding is immediately effective without any application-level filtering.
+- **Case governance** — `close_case`, `reopen_case`, `archive_case`,
+  `reassign_case`, `release_claim`. All require admin **or**
+  `has_case_access` (the claiming volunteer or a member of the case's own
+  org) — broader than admin-only, matching the spec's "admins and authorised
+  orgs" requirement. `reopen_case` only succeeds from `closed`/`archived`
+  (reopening an `adopted`/`released` case would contradict a resolved
+  outcome — that must instead be corrected via the adoption/TNR workflow,
+  which is the single source of truth for those statuses). `reassign_case`
+  validates that the target user's role is volunteer/org/admin before
+  assigning. Every action appends a typed `case_events` row
+  (`case_closed`, `case_reopened`, `case_archived`, `case_reassigned`,
+  `claim_released`).
+- **`claim_case` (M4) patched in M5** to also require the caller's
+  `profiles.is_approved = true` (admins exempt) — an unapproved volunteer or
+  org account could previously pass the role check but should not yet be
+  able to claim cases; this closes that gap.
+
+**Admin UI** (`/admin`, `/admin/users`, `/admin/organizations`, `/admin/flags`,
+`/admin/audit-logs`) is entirely server-rendered from direct Supabase queries
+— the admin dashboard's stats, the users table, the organisation queue, the
+flags queue, and the audit log table all read data that RLS already permits
+admins to see (`profiles_select`, `organizations_select`,
+`moderation_flags_select`, and the admin-only `audit_select` policy all
+include an `is_admin()` branch — see §4a of `docs/security-report.md`), so no
+RPC is needed for the *read* side, only for the privileged *writes* described
+above.
+
+**`FlagButton`** (`src/components/moderation/FlagButton.tsx`) lets any
+signed-in user report a cat profile or a comment; the insert is a direct
+table write (`mod_flags_insert` only requires `reported_by = auth.uid()`) —
+no RPC needed, mirroring the M4 comments/follows/bookmarks pattern.
 
 ## 4. Auth & roles
 
@@ -371,13 +440,13 @@ any external API key.
 - **lat/lng + haversine** instead of PostGIS: zero extra setup for judges;
   PostGIS is a documented future upgrade.
 - **Hand-authored DB types**: avoids requiring the Supabase CLI to build.
-- **Authenticated-only reporting for M2/M3**: the `sightings_insert` RLS policy
+- **Authenticated-only reporting for M2–M5**: the `sightings_insert` RLS policy
   requires `reporter_id = auth.uid()`. Enabling true guest inserts safely would
   need either relaxing that to accept `NULL` reporter rows from `anon` (spam/
   abuse risk with zero accountability) or routing through a service-role API
   endpoint with its own rate limiting (not yet built). Rather than weaken RLS
-  or bypass it without safeguards, M2/M3 require sign-in and defer guest
-  reporting to M4 alongside abuse mitigation.
+  or bypass it without safeguards, reporting requires sign-in through M5 and
+  guest reporting is deferred to M6 alongside abuse mitigation.
 - **`cats_map_public` as a lateral join view**: keeps the map's "one pin per
   cat, latest sighting" semantics enforced in SQL rather than duplicated in
   client code, and guarantees fuzzing happens before any row leaves the DB.
@@ -417,8 +486,25 @@ any external API key.
   infrastructure to run or explain to judges. The navbar bell fetches on
   mount and marks-all-read on open, which is enough to demonstrate the
   feature without the operational complexity of a live channel.
+- **Explicit `log_admin_action` calls over trigger-only auditing**: the M1
+  DML trigger (`log_audit_event`) captures a raw before/after row dump on
+  four tables, which is a good insert-only safety net but not a readable
+  audit trail. M5 admin RPCs additionally call `log_admin_action(...)`
+  directly with a purpose-built `diff` (e.g. `{"before": {...}, "after":
+  {...}}` for a role change, or `{"note": "..."}` for an approval) — this is
+  what the audit-log viewer actually shows as the "summary" column, and it
+  covers actions (role changes, org approval, flag review, case governance)
+  the DML trigger does not touch at all (`profiles`, `organizations`).
+- **Self-demotion guard enforced in two places, redundantly**: the
+  `update_user_role` RPC refuses to let an admin remove their own `admin`
+  role, and the `RoleEditor` UI disables the role `<select>` entirely for
+  the signed-in admin's own row. Neither alone would be sufficient —a
+  UI-only guard is trivially bypassed by calling the action directly, and a
+  server-only guard without the UI hint would let an admin submit a change
+  that silently fails with a generic error. Both together give a clear,
+  pre-emptive UX *and* an unbypassable server-side guarantee.
 
-## 8. Known limitations (M0–M4)
+## 8. Known limitations (M0–M5)
 
 - Guest (unauthenticated) reporting is not implemented; see the tradeoff above.
 - EXIF/GPS metadata stripping is not fully implemented — uploads are validated
@@ -430,13 +516,11 @@ any external API key.
   let a reporter add a "new mark seen this time" that gets merged into the
   cat's profile; the report form's trait fields describe the *cat*, not
   per-sighting deltas.
-- **Admin dashboard remains a placeholder.** Full moderation (hiding
-  comments, resolving flags), organisation approval, and an audit-log viewer
-  are M5.
-- **No case reassignment UI.** An org member can see and self-claim an
-  unclaimed case, but assigning a *specific* case to a *specific* volunteer
-  (beyond self-claiming) is not implemented — the org dashboard says so
-  directly rather than hiding the gap.
+- **Reassign takes a raw user ID, not a picker.** `CaseGovernanceActions`'
+  "Reassign…" control asks for the target volunteer/org member's user ID
+  directly rather than offering a searchable list of eligible users —
+  functional (the RPC validates the target's role before assigning), but not
+  polished. UI polish is planned for M7.
 - **Notifications are pull-based, not real-time** — no websocket/live push;
   the bell fetches on page load.
 - **`isAuthorisedCarer` on the cat profile page is a server-side

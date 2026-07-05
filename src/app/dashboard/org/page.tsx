@@ -20,10 +20,26 @@ export default async function OrgDashboardPage() {
   const user = await requireRole(["org", "admin"]);
   const supabase = createClient();
 
-  // Resolve the caller's org_id (admins without an org see an org-agnostic
-  // overview across all cases instead of being blocked).
-  const { data: profile } = await supabase.from("profiles").select("org_id").eq("id", user.id).maybeSingle();
+  // Resolve the caller's org_id and approval status (admins without an org
+  // see an org-agnostic overview across all cases instead of being blocked).
+  const { data: profile } = await supabase.from("profiles").select("org_id, is_approved").eq("id", user.id).maybeSingle();
   const orgId = profile?.org_id ?? null;
+
+  if (user.role === "org" && profile && !profile.is_approved) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-3xl font-bold text-brand-800">Rescue Organisation Dashboard</h1>
+        <Card className="border-yellow-200 bg-yellow-50">
+          <p className="text-sm text-yellow-800">
+            Your organisation account is <strong>pending admin approval</strong>.
+            You&apos;ll be able to see and manage cases here once an admin
+            approves your organisation. This usually happens quickly — check
+            back soon, or contact PawPin support if it&apos;s been a while.
+          </p>
+        </Card>
+      </div>
+    );
+  }
 
   let caseQuery = supabase
     .from("cases")
@@ -156,10 +172,11 @@ export default async function OrgDashboardPage() {
 
       <Card>
         <p className="text-sm text-gray-600">
-          Assigning a case to a specific volunteer (beyond claiming) and full
-          organisation approval/admin tooling are planned for a later
-          milestone. For now, volunteers self-claim unclaimed cases from the{" "}
+          Volunteers self-claim unclaimed cases from the{" "}
           <Link href="/cases" className="font-medium text-brand-600 hover:underline">case board</Link>.
+          Admins and org members can also reassign an already-claimed case to
+          a different volunteer directly from a cat&apos;s profile page
+          (case governance controls).
         </p>
       </Card>
     </div>

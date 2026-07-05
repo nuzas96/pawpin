@@ -22,6 +22,24 @@ export default async function VolunteerDashboardPage() {
   const user = await requireRole(["volunteer", "admin"]);
   const supabase = createClient();
 
+  if (user.role === "volunteer") {
+    const { data: profile } = await supabase.from("profiles").select("is_approved").eq("id", user.id).maybeSingle();
+    if (profile && !profile.is_approved) {
+      return (
+        <div className="space-y-6">
+          <h1 className="text-3xl font-bold text-brand-800">Volunteer Dashboard</h1>
+          <Card className="border-yellow-200 bg-yellow-50">
+            <p className="text-sm text-yellow-800">
+              Your volunteer account is <strong>pending admin approval</strong>.
+              You&apos;ll be able to claim cases and manage feeding/TNR/adoption
+              once an admin approves your account. Check back soon.
+            </p>
+          </Card>
+        </div>
+      );
+    }
+  }
+
   const { data: claimedCasesRaw } = await supabase
     .from("cases")
     .select("id, status, priority, opened_at, cat:cats(id, coat_color, fur_pattern)")

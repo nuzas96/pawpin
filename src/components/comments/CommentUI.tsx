@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { addComment } from "@/actions/comments";
+import { hideComment, unhideComment } from "@/actions/moderation";
 import { Button } from "@/components/ui/Button";
-import { Textarea } from "@/components/ui";
+import { Badge, Textarea } from "@/components/ui";
+import { FlagButton } from "@/components/moderation/FlagButton";
 
 export function CommentForm({ catId }: { catId: string }) {
   const router = useRouter();
@@ -54,9 +56,48 @@ export type CommentItem = {
   created_at: string;
   author_id: string | null;
   authorName: string | null;
+  is_hidden?: boolean;
 };
 
-export function CommentList({ comments }: { comments: CommentItem[] }) {
+function HideToggle({ commentId, isHidden }: { commentId: string; isHidden: boolean }) {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleToggle() {
+    setError(null);
+    setLoading(true);
+    const result = isHidden ? await unhideComment({ commentId }) : await hideComment({ commentId });
+    setLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    router.refresh();
+  }
+
+  return (
+    <span className="inline-flex items-center gap-2">
+      <button
+        type="button"
+        onClick={handleToggle}
+        disabled={loading}
+        className="text-xs font-medium text-brand-600 hover:underline disabled:opacity-50"
+      >
+        {loading ? "…" : isHidden ? "Unhide" : "Hide"}
+      </button>
+      {error && <span className="text-xs text-red-600">{error}</span>}
+    </span>
+  );
+}
+
+export function CommentList({
+  comments,
+  isAdmin = false,
+}: {
+  comments: CommentItem[];
+  isAdmin?: boolean;
+}) {
   if (comments.length === 0) {
     return <p className="text-sm text-gray-500">No comments yet.</p>;
   }
@@ -67,9 +108,12 @@ export function CommentList({ comments }: { comments: CommentItem[] }) {
           {/* Rendered as plain text — React escapes this by default; never
               dangerouslySetInnerHTML. */}
           <p className="whitespace-pre-wrap text-sm text-gray-800">{c.body}</p>
-          <p className="mt-1 text-xs text-gray-400">
-            {c.authorName ?? "A PawPin user"} · {new Date(c.created_at).toLocaleString()}
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+            <span>{c.authorName ?? "A PawPin user"} · {new Date(c.created_at).toLocaleString()}</span>
+            {isAdmin && c.is_hidden && <Badge className="bg-red-100 text-red-800">Hidden</Badge>}
+            {isAdmin && <HideToggle commentId={c.id} isHidden={Boolean(c.is_hidden)} />}
+            {!isAdmin && <FlagButton targetType="comment" targetId={c.id} label="Report" />}
+          </div>
         </li>
       ))}
     </ul>

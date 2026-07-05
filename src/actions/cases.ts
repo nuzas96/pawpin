@@ -13,9 +13,10 @@ export type AddCaseUpdateResult =
 
 /**
  * Claim an open case. Delegates to the `claim_case` SECURITY DEFINER RPC
- * (migration 0009), which:
+ * (migration 0009, patched in 0010 to also require approval), which:
  *   - requires the caller's role to be volunteer/org/admin (a plain
  *     registered user gets a clear rejection, surfaced below);
+ *   - requires the caller's profile to be approved (admins exempt);
  *   - rejects double-claiming by a different volunteer unless the caller is
  *     an admin or a member of the case's own organisation (override);
  *   - atomically sets `claimed_by`, promotes `reported -> active`, appends a
@@ -49,6 +50,9 @@ export async function claimCase(input: ClaimCaseInput): Promise<ClaimCaseResult>
         ok: false,
         error: "Only volunteers, rescue organisations, or admins can claim cases. Ask an admin to grant volunteer access if you'd like to help directly.",
       };
+    }
+    if (message.includes("pending admin approval")) {
+      return { ok: false, error: "Your account is pending admin approval and cannot claim cases yet." };
     }
     if (message.includes("already been claimed")) {
       return { ok: false, error: "This case has already been claimed by another volunteer." };

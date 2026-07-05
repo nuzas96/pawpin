@@ -34,8 +34,11 @@ locations.
   as a volunteer, scoped to the org's cases; can claim/override a case
   already claimed by a volunteer in the same org; org dashboard shows
   active/claimed/unclaimed counts and TNR/adoption pipelines.
-- **Admin**: all volunteer/org capabilities on every case, plus (M5) moderate
-  reports, review flags, approve orgs, close/archive cases, view audit logs.
+- **Admin** *(implemented M5)*: all volunteer/org capabilities on every case,
+  plus role/approval management (with a self-demotion guard), organisation
+  approval/rejection, moderation flag review (dismiss/resolve/hide comment/
+  close case), comment hide/unhide, case governance (close/reopen/archive/
+  reassign/release claim), and a filterable, read-only audit log viewer.
 
 ## 5. Data model
 
@@ -51,6 +54,12 @@ ear_tipped → released` (plus legacy `recovering`/`returned` values retained
 for backward compatibility) with `tnr_records.scheduled_at`; `adoptions.status`
 constrained to `not_available → intake → available → application_received →
 matched → adopted`.
+
+M5 additions: `case_status` enum gains `archived` (distinct from `closed` —
+archived means set aside without implying a resolved outcome);
+`moderation_flags.status` constrained to `open → reviewing → dismissed/
+resolved` with `resolved_at`/`resolution_note`; `organizations.admin_note`
+for approval/rejection reasoning.
 
 Location privacy: precise coords in `sightings`; `fuzz_coordinate()` +
 `sighting_geo_public` view expose only approximate coords per-sighting;
@@ -74,6 +83,13 @@ See `supabase/migrations/` for the authoritative schema.
   relying solely on RLS — because RLS's row-scoped policies cannot express
   "any volunteer may claim this case" before the claim exists. See
   `docs/architecture.md` §3e and `docs/security-report.md` §4b.
+- Admin governance writes (role/approval change, org approve/reject,
+  moderation flag review, comment hide/unhide, case governance) follow the
+  same RPC pattern, each independently re-checking `is_admin()` (or
+  admin-or-case-access for governance) and writing an explicit `audit_logs`
+  row via a `log_admin_action` helper with no client-facing grant of its
+  own. An admin cannot demote their own account away from `admin`. See
+  `docs/architecture.md` §3f and `docs/security-report.md` §4c.
 
 ## 7. Matching engine (M3, implemented)
 
@@ -103,8 +119,8 @@ full design and `src/lib/matching/` for the implementation.
 
 Landing, Live map, Report cat, Matching review (modal), Cat profile, Case board,
 Volunteer dashboard *(implemented M4)*, Org dashboard *(implemented M4)*,
-Admin dashboard *(placeholder until M5)*, Auth (sign in/up), Profile,
-About/Impact.
+Admin dashboard + Users + Organizations + Flags + Audit Logs
+*(implemented M5)*, Auth (sign in/up), Profile, About/Impact.
 
 ## 9. Milestones
 
@@ -148,7 +164,22 @@ About/Impact.
   real volunteer and organisation dashboards; upgraded case board (claimed
   filter + quick badges) and cat profile (claim button, feeding/TNR/adoption
   sections, case update form, comments, combined timeline).
-- **M5** dashboards + admin · **M6** hardening · **M7** docs/demo polish.
+- **M5 Admin Moderation, Organisation Approval, Role Management, Audit
+  Logs, Case Governance** *(implemented)* — 11 `SECURITY DEFINER` RPCs
+  (`update_user_role` with a self-demotion guard, `approve_organization`/
+  `reject_organization`, `review_moderation_flag` with 4 actions,
+  `hide_comment`/`unhide_comment`, `close_case`/`reopen_case`/`archive_case`/
+  `reassign_case`/`release_claim`, migration 0010) each self-authorizing and
+  writing an explicit `audit_logs` row via `log_admin_action`; `claim_case`
+  (M4) patched to also require approval; a real admin dashboard (`/admin`)
+  with live stats, recent audit logs, and recent reports; `/admin/users`
+  (role/approval management with the self-demotion guard reinforced in the
+  UI), `/admin/organizations` (approval queue with admin notes),
+  `/admin/flags` (open/reviewed moderation queue), `/admin/audit-logs`
+  (filterable, read-only); a `FlagButton` on cat profiles/comments; case
+  governance controls on the cat profile page gated to admins/authorised
+  carers.
+- **M6** hardening · **M7** docs/demo polish.
 
 ## 10. Acceptance criteria
 
@@ -236,3 +267,29 @@ About/Impact.
   re-checks authorization server-side (RPC or RLS ownership check) — no
   write trusts a client-supplied role or ownership claim.
 - `npm run build`, `lint`, `typecheck`, and `test` all pass (73/73 tests).
+
+**M5**
+- A non-admin cannot access any `/admin/*` page (role guard redirects) and
+  cannot successfully call any admin RPC directly (each independently
+  checks `is_admin()` or admin-or-case-access server-side).
+- An admin can change any user's role and approval status; the admin cannot
+  demote their **own** account away from `admin` (enforced by both a
+  disabled UI control and an independent server-side RPC check). Every
+  change writes an `audit_logs` row with before/after values.
+- An admin can approve or reject a pending organisation with an optional
+  note; rejecting preserves the organisation row (never deletes it). Org/
+  volunteer users on an unapproved account see a "pending approval" message
+  instead of their dashboard and cannot claim cases.
+- An admin can dismiss, resolve, hide-the-underlying-comment, or
+  close-the-associated-case directly from an open moderation flag; each
+  action updates the flag's status and writes an audit log row.
+- Hidden comments are excluded from every normal viewer's query (verified by
+  an automated test) but remain visible, with a "Hidden" badge and an
+  unhide control, to admins. Comment text is never modified by moderation.
+- Admins and authorised carers (claiming volunteer or org member) can close,
+  reopen, archive, reassign, or release the claim on a case; each action
+  appends a `case_events` row and an audit log row. Reopening only succeeds
+  from `closed`/`archived` — never from an `adopted`/`released` case.
+- The audit log viewer is admin-only, read-only, and supports filtering by
+  action and entity type.
+- `npm run build`, `lint`, `typecheck`, and `test` all pass (97/97 tests).
