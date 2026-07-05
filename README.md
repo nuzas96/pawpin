@@ -6,17 +6,18 @@ builds **persistent cat profiles** so repeat sightings form one continuous case
 history, and connects volunteers, rescue organisations, and the community to
 coordinate feeding, TNR, medical care, and adoption — all on a privacy-first map.
 
-> **Build status:** this repository currently implements **Milestone M0
-> (Foundation)**, **M1 (Data & Security Backbone)**, **M2 (Report Flow +
-> Storage + Live Map)**, **M3 (Matching Engine + Persistent Cat Profiles)**,
-> **M4 (Volunteer Coordination, Feeding, TNR, Adoption, Community Case
-> Workflow)**, and **M5 (Admin Moderation, Organisation Approval, Role
-> Management, Audit Logs, Case Governance)**. Admins can now approve
-> volunteers and organisations, manage user roles, review and act on
-> flagged content, hide/unhide comments, and govern cases (close, reopen,
-> archive, reassign, release claim) — every action leaves an audit trail.
-> Final security hardening, rate limiting, and submission polish land in
-> M6/M7. See "Milestone status" below and `.kiro/specs/pawpin/spec.md`.
+> **Build status:** this repository implements **Milestones M0–M6** —
+> Foundation; Data & Security Backbone; Report Flow + Storage + Live Map;
+> Matching Engine + Persistent Cat Profiles; Volunteer Coordination
+> (feeding/TNR/adoption/community); Admin Moderation, Org Approval, Role
+> Management, Audit Logs & Case Governance; and **M6 (Security Hardening, UX
+> Polish, Deployment Readiness, Optional AI Vision)**. M6 adds rate limiting,
+> security headers (CSP), dependency-free image EXIF/metadata stripping,
+> upload hardening, a location-privacy audit, accessibility polish,
+> deployment docs, and an optional Gemini Vision trait-suggestion feature
+> that gracefully disables without an API key. Final submission packaging
+> and demo-video polish land in M7. See "Milestone status" below and
+> `.kiro/specs/pawpin/spec.md`.
 
 ---
 
@@ -310,6 +311,67 @@ immediately. With confirmation enabled, users must confirm via the emailed link
 - Filters: urgency, case status, condition tag. Loading, empty, and error
   states are all implemented.
 
+## Optional AI Vision trait suggestions
+
+- If (and only if) a `GEMINI_API_KEY` is configured server-side, the report
+  form shows a **"✨ Suggest traits with AI"** button. It sends **only the
+  uploaded photo** to Google's Gemini Vision model — never location, reporter
+  contact, or user identity — and returns structured, Zod-validated trait
+  suggestions (coat colour, fur pattern, size, age group, visible injuries,
+  possible pregnancy, distinguishing marks, confidence).
+- Suggestions are applied to the form's **editable** fields — the reporter
+  reviews, edits, and confirms before submitting. Wording is always advisory
+  ("AI-suggested traits — please review before submitting; human confirmation
+  required"), and the AI never claims to identify a *specific* cat; identity
+  matching stays with the deterministic engine.
+- **The app is fully functional without the key.** With no key the button
+  simply doesn't appear and reporters fill traits in manually. There is no
+  SDK dependency (a plain server-side `fetch` is used), so the feature never
+  affects the build. See `docs/security-report.md` and `docs/architecture.md`.
+
+## Security hardening (M6)
+
+- **Rate limiting** on sensitive server actions (report, matching decision,
+  comment, moderation flag, AI suggestion) with a friendly "Too many
+  requests…" message. See `src/lib/rateLimit.ts`.
+- **Security headers** including a Content-Security-Policy tuned for Leaflet /
+  OpenStreetMap / Supabase, plus `X-Frame-Options`, `X-Content-Type-Options`,
+  `Referrer-Policy`, and a `Permissions-Policy` that allows same-origin
+  geolocation (used by the report flow) and disables camera/microphone. See
+  `next.config.mjs`.
+- **Image EXIF/metadata stripping**: uploaded JPEG EXIF/GPS/XMP and PNG text
+  metadata are removed server-side before storage (dependency-free, no
+  `sharp`), so a phone photo's embedded GPS can't bypass the map's fuzzing.
+  See `docs/security-report.md` for the (partial WEBP) status.
+
+## Deployment (Vercel + Supabase)
+
+PawPin deploys as a standard Next.js app on Vercel with a Supabase backend.
+
+1. **Supabase**: create a project, run migrations `0001`–`0010` in the SQL
+   editor (in order), then `supabase/seed.sql` for demo data. Confirm the
+   `cat-photos` Storage bucket exists (created by `0005_storage.sql`).
+2. **Vercel**: import the repo. Set the environment variables from
+   `.env.example` in the Vercel project settings:
+   - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (public)
+   - `SUPABASE_SERVICE_ROLE_KEY` (server only — mark as such; never a
+     `NEXT_PUBLIC_` var)
+   - `NEXT_PUBLIC_APP_URL` = your deployed URL (for auth redirects)
+   - `GEMINI_API_KEY` (optional; enables AI Vision)
+3. In Supabase **Authentication → URL Configuration**, add your Vercel URL to
+   the allowed redirect URLs so `/auth/callback` works in production.
+4. Deploy. `npm run build` must pass locally first (it runs lint + typecheck).
+
+**Production checklist**
+- [ ] Migrations `0001`–`0010` applied in order; seed run (if a demo).
+- [ ] All env vars set; `SUPABASE_SERVICE_ROLE_KEY` is **not** public.
+- [ ] `NEXT_PUBLIC_APP_URL` matches the deployed origin.
+- [ ] Auth redirect URL allow-listed in Supabase.
+- [ ] "Confirm email" setting decided (off = instant demo sign-in).
+- [ ] Map tiles, cat photos, and geolocation all work behind the CSP
+      (verify `/map` and `/report` after deploy).
+- [ ] No real secrets committed; `.env.local` is git-ignored.
+
 ---
 
 ## Project structure
@@ -375,44 +437,39 @@ for the security model.
   hide/unhide with hidden-status visible only to admins; case governance
   (close/reopen/archive/reassign/release claim) available to admins and
   authorised carers; a filterable, read-only audit log viewer.
-- ⏭️ **M6** hardening · **M7** docs/demo polish.
+- ✅ **M6 Security Hardening, UX Polish, Deployment Readiness, Optional AI
+  Vision** — per-action rate limiting; CSP + security headers; dependency-free
+  image EXIF/metadata stripping on upload; upload hardening (MIME-mismatch
+  rejection, friendly errors); a location-privacy audit; a skip-to-content
+  accessibility link; deployment/production docs; and an optional Gemini
+  Vision trait-suggestion feature (image-only, Zod-validated, graceful
+  no-key fallback).
+- ⏭️ **M7** final submission packaging & demo-video polish.
 
-## Known limitations (M5)
+## Known limitations (M6)
 
-- **Reporting requires an account.** Guest (unauthenticated) reporting is not
-  implemented yet — the current RLS insert policies require `authenticated`.
-  This is a deliberate, documented scope decision (see
-  `docs/security-report.md`); guest reporting is planned for M6.
-- **Matching is heuristic-assisted, not AI-verified.** The engine is a
-  deterministic, explainable TypeScript module — never a claim of certain
-  identification. An optional AI adapter skeleton exists
-  (`src/lib/matching/ai-adapter.ts`) but performs no real analysis yet even
-  when `GEMINI_API_KEY` is set; it is a no-op interface for a future
-  milestone. The app is fully functional without any AI key.
-- **Trait merging on link is conservative.** Linking a sighting to an
-  existing cat currently bumps `last_seen_at` and preserves existing
-  distinguishing marks; it does not yet auto-merge new marks typed on the
-  report form into the cat profile (the report form doesn't collect a
-  separate "marks seen this time" field distinct from the cat's profile
-  marks). This is a safe, non-destructive default.
-- **EXIF/GPS metadata stripping is not fully implemented.** Uploaded photos
-  are validated (type/size/magic bytes) but not yet re-encoded to strip
-  embedded EXIF tags. Documented as planned hardening in
-  `docs/security-report.md`.
+- **Reporting requires an account.** Guest (unauthenticated) reporting is
+  still not implemented — the RLS insert policies require `authenticated`.
+  This remains a deliberate, documented scope decision (see
+  `docs/security-report.md`); it is deferred to M7+ alongside CAPTCHA.
+- **Matching is heuristic-assisted, not AI-verified.** The deterministic
+  engine is the source of truth for *identity* matching (with human
+  confirmation). The M6 AI Vision feature only suggests *traits* of the cat
+  in a photo — it never claims two photos are the same cat.
+- **Rate limiting is per-instance (in-memory).** It meaningfully throttles a
+  single client on a warm instance but is not a distributed guarantee; a
+  Supabase/edge-backed limiter is the documented production upgrade
+  (`docs/security-report.md`).
+- **WEBP metadata stripping is partial.** JPEG (EXIF/GPS/XMP) and PNG (text
+  chunks) are stripped server-side before upload; WEBP is passed through
+  unchanged — the one documented remaining gap.
+- **Trait merging on link is conservative** (bumps `last_seen_at`, preserves
+  existing marks; no per-sighting "marks seen this time" merge yet).
 - **No public geocoded address.** The "public area label" is a coarse
   coordinate-grid label, not a real place name (no external geocoding
   dependency by design).
-- **Reassign UI takes a raw user ID.** The cat profile's "Reassign…" control
-  currently asks for the target volunteer/org member's user ID directly
-  rather than offering a searchable picker of eligible users — functional,
-  but not yet polished. UI polish is planned for M7.
-- **No rate limiting on admin actions yet.** Role changes, approvals, and
-  moderation actions are correctly authorization-checked server-side but not
-  yet throttled; rate limiting across the app is planned for M6.
-- Volunteer/org/admin dashboards, feeding, TNR, adoption, comments, follows,
-  bookmarks, and notifications are fully implemented (M4/M5); final security
-  hardening (CSP headers, rate limiting) and submission polish remain for
-  M6/M7.
+- **Reassign UI takes a raw user ID** rather than a searchable picker —
+  functional, but UI polish is planned for M7.
 - **Notifications are pull-based, not real-time.** The navbar bell fetches on
   page load and marks-all-read on open; there is no live/websocket push.
 - **`isAuthorisedCarer` on the cat profile page is a server-side

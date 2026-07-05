@@ -7,12 +7,14 @@ import {
   sightingSchema,
   type CatTraitsInput,
   type ConditionTag,
+  type AiTraitSuggestion,
 } from "@/lib/validation/schemas";
 import type { PublicMatchCandidate } from "@/lib/matching/types";
 import { PhotoUpload } from "@/components/report/PhotoUpload";
 import { LocationCapture } from "@/components/report/LocationCapture";
 import { TraitPicker } from "@/components/report/TraitPicker";
 import { UrgencyPicker, ConditionTagPicker } from "@/components/report/UrgencyAndConditionPicker";
+import { AiSuggestButton } from "@/components/report/AiSuggestButton";
 import { MatchReviewModal } from "@/components/matching/MatchReviewModal";
 import { Button } from "@/components/ui/Button";
 import { Card, Label, Textarea, Input } from "@/components/ui";
@@ -28,7 +30,13 @@ const DEFAULT_TRAITS: CatTraitsInput = {
 
 type FormState = "idle" | "submitting" | "matching" | "success" | "error";
 
-export function ReportForm({ isAuthenticated }: { isAuthenticated: boolean }) {
+export function ReportForm({
+  isAuthenticated,
+  aiEnabled = false,
+}: {
+  isAuthenticated: boolean;
+  aiEnabled?: boolean;
+}) {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [lat, setLat] = useState<number | null>(null);
   const [lng, setLng] = useState<number | null>(null);
@@ -59,6 +67,30 @@ export function ReportForm({ isAuthenticated }: { isAuthenticated: boolean }) {
     setConditionTags([]);
     setNotes("");
     setGuestContact("");
+  }
+
+  /**
+   * Apply an AI trait suggestion into the (still editable) form fields. Only
+   * populates fields — never submits — so the reporter reviews and edits
+   * before submitting. Visible injuries / possible pregnancy are surfaced as
+   * condition tags the reporter can remove.
+   */
+  function applyAiSuggestion(s: AiTraitSuggestion) {
+    setTraits((prev) => ({
+      ...prev,
+      coatColor: s.coatColour,
+      furPattern: s.furPattern,
+      sizeClass: s.approximateSize,
+      ageGroup: s.ageGroup,
+      distinguishingMarks:
+        s.distinguishingMarks.length > 0 ? s.distinguishingMarks : prev.distinguishingMarks,
+    }));
+    setConditionTags((prev) => {
+      const next = new Set<ConditionTag>(prev);
+      if (s.visibleInjuries.length > 0) next.add("injured");
+      if (s.possiblePregnancy) next.add("pregnant");
+      return [...next];
+    });
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -203,6 +235,11 @@ export function ReportForm({ isAuthenticated }: { isAuthenticated: boolean }) {
 
         <Card>
           <h2 className="mb-3 font-semibold text-brand-800">4. Cat traits</h2>
+          {aiEnabled && (
+            <div className="mb-4 border-b border-brand-100 pb-4">
+              <AiSuggestButton photoFile={photoFile} onApply={applyAiSuggestion} />
+            </div>
+          )}
           <TraitPicker traits={traits} onChange={setTraits} />
         </Card>
 

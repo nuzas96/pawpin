@@ -1,7 +1,7 @@
 # PawPin — Security Report
 
 This document describes PawPin's threat model and the controls implemented
-through Milestone M5. Security is a layered, defense-in-depth design with
+through Milestone M6. Security is a layered, defense-in-depth design with
 Postgres Row Level Security (RLS) as the authoritative boundary.
 
 ## 1. Threat model
@@ -235,17 +235,29 @@ holds even if a request bypassed the UI entirely.
   (`src/lib/geo/location.ts`) is derived from the fuzzed coordinates rounded to
   an even coarser 2-decimal-place grid — never more precise than the public
   map pin.
-- **EXIF/GPS metadata — honest status:** uploaded photos are validated
-  (MIME allowlist, 8 MB max, magic-byte detection in
-  `src/lib/storage/catPhotos.ts`) but are **not yet re-encoded to strip
-  embedded EXIF tags**. This is a real gap: a JPEG with embedded GPS EXIF data
-  could theoretically leak more precise location than the fuzzed pin if a
-  carer or attacker inspected the file's metadata directly. **Planned
-  hardening (M3/M6):** re-encode every accepted image server-side (strip all
-  metadata, normalise to a fixed quality JPEG/WEBP) before it is written to
-  Storage. Until then, users should be aware that photo metadata is not
-  actively scrubbed, and PawPin's location privacy guarantee for the *map and
-  profile* rests on the fuzzing layer (§ above), not on photo metadata removal.
+- **EXIF/GPS metadata stripping — implemented in M6:** uploaded photos are
+  validated (MIME allowlist, 8 MB max, magic-byte detection) AND stripped of
+  embedded metadata server-side, before the bytes are written to Storage, by
+  `stripImageMetadata` (`src/lib/validation/image.ts`, called from
+  `uploadCatPhoto`). This matters because a phone photo's embedded GPS EXIF
+  would otherwise be a bypass of the map's coordinate-fuzzing layer.
+  Implementation is **dependency-free** (no `sharp`/native binary — so it
+  never risks the build or the local demo):
+  - **JPEG**: the byte stream is rebuilt dropping the APP1 (EXIF/XMP) and COM
+    (comment) segments while keeping APP0 (JFIF), quantisation/Huffman tables,
+    frame headers, and scan data — so image quality and colour are preserved
+    and GPS/EXIF/XMP are gone. Verified by a unit test that asserts no APP1
+    marker remains and the image is still a valid JPEG.
+  - **PNG**: textual/metadata chunks (`tEXt`, `zTXt`, `iTXt`, `tIME`, `eXIf`)
+    are dropped; rendering-critical chunks are kept.
+  - **WEBP**: **passed through unchanged** — a full RIFF/EXIF/XMP-chunk rewrite
+    is the one documented remaining gap. JPEG (the dominant phone-camera
+    format carrying GPS) and PNG are covered.
+  - On any parse surprise the original bytes are returned (fail-open on
+    functionality: a valid image still uploads), so a malformed file never
+    blocks a report.
+  The map/profile location-privacy guarantee therefore now rests on **both**
+  the SQL fuzzing layer *and* photo-metadata removal, not fuzzing alone.
 
 ## 5. Input & file validation
 

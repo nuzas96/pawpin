@@ -11,6 +11,7 @@ import {
   type HideCommentInput,
   type UnhideCommentInput,
 } from "@/lib/validation/schemas";
+import { checkRateLimit, RATE_LIMITS, RATE_LIMIT_MESSAGE } from "@/lib/rateLimit";
 
 export type FlagContentResult = { ok: true; flagId: string } | { ok: false; error: string };
 export type ReviewFlagResult = { ok: true; flagId: string } | { ok: false; error: string };
@@ -33,6 +34,9 @@ export async function flagContent(input: ModerationFlagInput): Promise<FlagConte
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "You must be signed in to flag content." };
+
+  const rate = checkRateLimit("flag", user.id, RATE_LIMITS.flag);
+  if (!rate.ok) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
   const { data, error } = await supabase
     .from("moderation_flags")

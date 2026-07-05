@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { commentSchema, type CommentInput } from "@/lib/validation/schemas";
+import { checkRateLimit, RATE_LIMITS, RATE_LIMIT_MESSAGE } from "@/lib/rateLimit";
 
 export type AddCommentResult =
   | { ok: true; commentId: string }
@@ -29,6 +30,9 @@ export async function addComment(input: CommentInput): Promise<AddCommentResult>
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "You must be signed in to comment." };
+
+  const rate = checkRateLimit("comment", user.id, RATE_LIMITS.comment);
+  if (!rate.ok) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
   const { data, error } = await supabase
     .from("comments")

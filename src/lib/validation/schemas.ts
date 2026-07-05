@@ -318,3 +318,31 @@ export const releaseClaimSchema = z.object({
   note: z.string().trim().max(500).optional(),
 });
 export type ReleaseClaimInput = z.infer<typeof releaseClaimSchema>;
+
+// ---------------------------------------------------------------------------
+// AI Vision trait suggestion (M6, optional) — the STRUCTURED shape we ask
+// Gemini to return and then validate before showing anything to the user.
+// Enum fields reuse the app's own enums so an AI suggestion can be dropped
+// straight into the report form's editable fields. If the model returns
+// anything that fails this schema, the feature degrades to "no suggestion"
+// rather than surfacing unvalidated content.
+// ---------------------------------------------------------------------------
+export const aiTraitSuggestionSchema = z.object({
+  coatColour: coatColorEnum,
+  furPattern: furPatternEnum,
+  approximateSize: sizeClassEnum,
+  ageGroup: ageGroupEnum,
+  visibleInjuries: z.array(z.string().trim().min(1).max(60)).max(8).default([]),
+  possiblePregnancy: z.boolean().default(false),
+  distinguishingMarks: z.array(z.string().trim().min(1).max(40)).max(10).default([]),
+  confidence: z.enum(["low", "medium", "high"]),
+});
+export type AiTraitSuggestion = z.infer<typeof aiTraitSuggestionSchema>;
+
+// Input to the `suggestTraitsFromPhoto` server action. Only the image is
+// ever sent to the AI — never coordinates, contact, or user identity.
+export const aiVisionInputSchema = z.object({
+  base64: z.string().min(1).max(12_000_000), // ~ 8 MB image once base64-encoded
+  mime: z.enum(["image/jpeg", "image/png", "image/webp"]),
+});
+export type AiVisionInput = z.infer<typeof aiVisionInputSchema>;

@@ -8,6 +8,7 @@ import { searchMatchCandidates } from "@/lib/matching/candidateSearch";
 import { findPossibleMatches } from "@/lib/matching/engine";
 import { toPublicMatchCandidates } from "@/lib/matching/publicProjection";
 import type { PublicMatchCandidate } from "@/lib/matching/types";
+import { checkRateLimit, RATE_LIMITS, RATE_LIMIT_MESSAGE } from "@/lib/rateLimit";
 
 export type CreateSightingResult =
   | {
@@ -59,6 +60,11 @@ export async function createSighting(
       ok: false,
       error: "You must be signed in to submit a report in this version of PawPin.",
     };
+  }
+
+  const rate = checkRateLimit("report", user.id, RATE_LIMITS.report);
+  if (!rate.ok) {
+    return { ok: false, error: RATE_LIMIT_MESSAGE };
   }
 
   // 1. Upload photo (optional) and record its metadata row.

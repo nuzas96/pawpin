@@ -7,6 +7,7 @@ import {
   type LinkSightingInput,
   type CreateCatFromSightingInput,
 } from "@/lib/validation/schemas";
+import { checkRateLimit, RATE_LIMITS, RATE_LIMIT_MESSAGE } from "@/lib/rateLimit";
 
 export type LinkSightingResult =
   | { ok: true; catId: string; caseId: string }
@@ -49,6 +50,9 @@ export async function linkSightingToCatProfile(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "You must be signed in to confirm a match." };
 
+  const rate = checkRateLimit("matchDecision", user.id, RATE_LIMITS.matchDecision);
+  if (!rate.ok) return { ok: false, error: RATE_LIMIT_MESSAGE };
+
   const { data, error } = await supabase
     .rpc("link_sighting_to_cat", { p_sighting_id: sightingId, p_cat_id: catId })
     .single();
@@ -83,6 +87,9 @@ export async function createCatProfileFromSighting(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "You must be signed in to create a cat profile." };
+
+  const rate = checkRateLimit("matchDecision", user.id, RATE_LIMITS.matchDecision);
+  if (!rate.ok) return { ok: false, error: RATE_LIMIT_MESSAGE };
 
   const { data, error } = await supabase
     .rpc("create_cat_from_sighting", {
