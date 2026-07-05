@@ -452,6 +452,26 @@ export interface Database {
         };
         Relationships: [];
       };
+      cats_map_public: {
+        Row: {
+          cat_id: string;
+          status: CaseStatus;
+          coat_color: CoatColor;
+          fur_pattern: FurPattern;
+          size_class: SizeClass;
+          age_group: AgeGroup;
+          distinguishing_marks: string[];
+          ear_tipped: boolean;
+          primary_photo_id: string | null;
+          last_seen_at: string;
+          urgency: UrgencyLevel;
+          condition_tags: string[];
+          fuzzed_lat: number;
+          fuzzed_lng: number;
+          last_sighting_at: string;
+        };
+        Relationships: [];
+      };
     };
     Functions: {
       current_user_role: { Args: Record<string, never>; Returns: string };
@@ -459,6 +479,7 @@ export interface Database {
       is_volunteer: { Args: Record<string, never>; Returns: boolean };
       is_org: { Args: Record<string, never>; Returns: boolean };
       has_case_access: { Args: { case_id: string }; Returns: boolean };
+      has_cat_access: { Args: { target_cat_id: string }; Returns: boolean };
       fuzz_coordinate: { Args: { value: number }; Returns: number };
     };
     Enums: {

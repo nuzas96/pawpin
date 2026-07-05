@@ -29,6 +29,11 @@ export const caseStatusEnum = z.enum([
 export const flagReasonEnum = z.enum([
   "spam", "inappropriate", "duplicate", "wrong_info", "abuse", "other",
 ]);
+export const conditionTagEnum = z.enum([
+  "healthy", "hungry", "injured", "sick", "pregnant", "kitten",
+  "friendly", "fearful", "needs_feeding", "tnr_needed",
+]);
+export type ConditionTag = z.infer<typeof conditionTagEnum>;
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -72,19 +77,30 @@ export const catTraitsSchema = z.object({
 export type CatTraitsInput = z.infer<typeof catTraitsSchema>;
 
 // ---------------------------------------------------------------------------
-// Sighting
+// Sighting / Report
 // ---------------------------------------------------------------------------
 export const sightingSchema = z.object({
-  lat: z.number().min(-90).max(90),
-  lng: z.number().min(-180).max(180),
+  lat: z.number().min(-90, "Latitude must be between -90 and 90.").max(90, "Latitude must be between -90 and 90."),
+  lng: z.number().min(-180, "Longitude must be between -180 and 180.").max(180, "Longitude must be between -180 and 180."),
   urgency: urgencyEnum.default("medium"),
-  conditionTags: z.array(z.string().trim().min(1).max(40)).max(12).default([]),
+  conditionTags: z.array(conditionTagEnum).max(conditionTagEnum.options.length).default([]),
   notes: z.string().trim().max(1000).optional(),
   photoId: z.string().uuid().optional(),
   catId: z.string().uuid().optional(),
   traits: catTraitsSchema,
+  // Optional contact for guest reports only. Never required; documented in
+  // docs/security-report.md as minimal, opt-in, carer-visible-only contact.
+  guestContact: z.string().trim().max(200).optional(),
 });
 export type SightingInput = z.infer<typeof sightingSchema>;
+
+/**
+ * Full report-form payload validated on the client before submission and
+ * re-validated on the server inside the server action. `lat`/`lng` come from
+ * either the GPS capture or the manual fallback fields.
+ */
+export const reportFormSchema = sightingSchema;
+export type ReportFormInput = z.infer<typeof reportFormSchema>;
 
 // ---------------------------------------------------------------------------
 // Comment (plain text only — never rendered as HTML)

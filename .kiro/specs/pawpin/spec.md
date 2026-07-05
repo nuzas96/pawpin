@@ -42,7 +42,9 @@ Tables (UUID PKs, `timestamptz`, enums, indexes): `profiles`, `organizations`,
 `notifications`, `moderation_flags`, `audit_logs`, `match_suggestions`.
 
 Location privacy: precise coords in `sightings`; `fuzz_coordinate()` +
-`sighting_geo_public` view expose only approximate coords publicly.
+`sighting_geo_public` view expose only approximate coords per-sighting;
+`cats_map_public` view (added M2) exposes one fuzzed row per cat joined to its
+latest sighting, powering the live map without ever selecting raw coordinates.
 
 See `supabase/migrations/` for the authoritative schema.
 
@@ -76,12 +78,23 @@ About/Impact.
 - **M0 Foundation** — scaffold, layout, pages, Supabase clients, auth + guards.
 - **M1 Data & Security Backbone** — schema, location privacy, RLS, storage
   policies, validation foundation, seed data.
-- **M2** report flow + live map · **M3** matching engine + profiles · **M4**
-  coordination workflows · **M5** dashboards + admin · **M6** hardening ·
-  **M7** docs/demo polish.
+- **M2 Report Flow + Storage + Live Map** *(implemented)* — real report form
+  (photo, GPS/manual location, urgency, condition tags, traits, optional
+  guest contact) validated client + server with Zod; `createSighting` server
+  action uploads the photo (`uploadCatPhoto`, MIME/size/magic-byte
+  re-validation, random per-user storage path) and creates a new cat + case +
+  initial `case_events` timeline entry (authenticated users only for this
+  milestone — see spec §6 and `docs/security-report.md`); interactive React
+  Leaflet + OSM live map reading only the fuzzed `cats_map_public` /
+  `sighting_geo_public` views, with urgency/status/condition filters and
+  loading/empty/error states; read-only case board with disabled claim
+  buttons; basic cat profile page with sighting history and case timeline.
+- **M3** matching engine + profiles · **M4** coordination workflows · **M5**
+  dashboards + admin · **M6** hardening · **M7** docs/demo polish.
 
-## 10. Acceptance criteria (M0/M1)
+## 10. Acceptance criteria
 
+**M0/M1**
 - `npm install`, `npm run dev`, and `npm run build` all succeed.
 - All pages reachable; no broken navigation; no console errors on load.
 - Auth sign up/in/out works; profile auto-created with `role = 'user'`.
@@ -90,4 +103,20 @@ About/Impact.
 - Storage bucket + policies defined.
 - Zod schemas + image validation present with passing tests.
 - Seed data covers all listed entities.
-- Documentation present and in English.
+
+**M2**
+- An authenticated user can submit a report (photo optional, GPS or manual
+  lat/lng, urgency, condition tags, traits, notes, optional contact) and it
+  persists as a new `cats` + `sightings` + `cases` + `case_events` row set.
+- Uploaded photos are validated server-side (MIME/size/magic bytes) and stored
+  under a random, per-user-scoped path; metadata is recorded in `photos`.
+- The live map renders real data from `cats_map_public` only, with working
+  urgency/status/condition filters and loading/empty/error states.
+- The case board lists real cases with disabled (not fake) claim buttons.
+- The cat profile page shows real data including fuzzed sighting history and
+  the case timeline.
+- Public map/profile data never includes raw `lat`/`lng` (enforced by RLS and
+  covered by an automated test).
+- Documentation explains the report flow, image upload, location privacy, and
+  what remains for M3.
+- `npm run build`, `lint`, `typecheck`, and `test` all pass.

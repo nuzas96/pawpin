@@ -88,6 +88,44 @@ describe("sightingSchema", () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it("rejects a condition tag outside the allowed set", () => {
+    const result = sightingSchema.safeParse({
+      lat: 1.35,
+      lng: 103.8,
+      conditionTags: ["rabid"],
+      traits: { coatColor: "orange", furPattern: "tabby", sizeClass: "medium" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts multiple valid condition tags", () => {
+    const result = sightingSchema.safeParse({
+      lat: 1.35,
+      lng: 103.8,
+      conditionTags: ["hungry", "friendly", "tnr_needed"],
+      traits: { coatColor: "orange", furPattern: "tabby", sizeClass: "medium" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an optional guest contact under the max length", () => {
+    const result = sightingSchema.safeParse({
+      lat: 1.35,
+      lng: 103.8,
+      guestContact: "+65 9123 4567",
+      traits: { coatColor: "orange", furPattern: "tabby", sizeClass: "medium" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a missing latitude", () => {
+    const result = sightingSchema.safeParse({
+      lng: 103.8,
+      traits: { coatColor: "orange", furPattern: "tabby", sizeClass: "medium" },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("commentSchema", () => {

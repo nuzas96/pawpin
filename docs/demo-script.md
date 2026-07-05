@@ -1,14 +1,16 @@
 # PawPin — Demo Script
 
-A ~3–4 minute walkthrough for judges. This reflects the **M0/M1 foundation**
-build; steps marked *(planned)* describe where later milestones plug in.
+A ~4–5 minute walkthrough for judges. This reflects the **M0/M1/M2** build:
+foundation + data/security backbone + a real report → storage → live map loop.
 
 ## Setup (before recording)
 
-1. Run migrations `0001`–`0005` and `supabase/seed.sql` in the Supabase SQL editor.
+1. Run migrations `0001`–`0006` and `supabase/seed.sql` in the Supabase SQL editor.
 2. In `.env.local`, set the Supabase URL + keys and `NEXT_PUBLIC_APP_URL`.
 3. (Recommended) Disable "Confirm email" in Supabase Auth for a smooth sign-in.
 4. `npm run dev` → open http://localhost:3000.
+5. Have your browser location permission ready to allow (or plan to use the
+   manual lat/lng fallback on stage).
 
 ## Scene-by-scene
 
@@ -17,44 +19,62 @@ build; steps marked *(planned)* describe where later milestones plug in.
 - Point out the three differentiators: persistent cat profiles, privacy-first
   map, explainable matching.
 
-**0:30 — The problem & privacy stance (About page)**
-- Navigate to About. Highlight the problem statement and the privacy paragraph:
-  the public only ever sees **approximate** locations; precise GPS is restricted
-  to authorised carers.
+**0:30 — Live map with seeded data**
+- Go to `/map`. Point out the seeded pins are already there, colour-coded by
+  urgency. Open a popup — show status, urgency, last seen, **area label**
+  (not an address), traits, and the profile link.
+- Try the urgency/status/condition filters live.
+- Call out the privacy note: "Public map pins are approximate to protect cats
+  and reporters."
 
-**1:00 — Sign in as different roles**
-- Sign in as `admin@pawpin.test` / `PawPinDemo123`. Show the navbar now shows
-  the Admin link and the role badge.
-- Visit `/admin` — it loads (role guard passes).
-- Sign out, sign in as `user@pawpin.test`. Visit `/admin` — you are redirected
-  (role guard blocks non-admins). This demonstrates route guarding.
+**1:15 — Report a real stray (the core loop)**
+- Sign in as `user@pawpin.test` / `PawPinDemo123`.
+- Go to `/report`. Walk through the sections:
+  - Add a photo — show the live preview, then try an oversized/invalid file
+    to show it gets rejected with a clear message.
+  - Click "Use my current location" (or enter lat/lng manually if GPS isn't
+    available on the demo machine) — point out the public area label preview
+    and the privacy note under the location step.
+  - Pick an urgency level and a couple of condition tags (chips).
+  - Fill in coat colour, pattern, size, age, and a distinguishing mark.
+  - Add a short note.
+- Submit. Show the loading state, then the success screen — read the
+  milestone-honest text aloud: "Matching review will be added in the next
+  milestone. For now, PawPin creates a new cat profile and rescue case from
+  this sighting."
+- Click through to the new cat profile.
 
-**1:45 — Data & security backbone (the real M1 story)**
-- In the Supabase SQL editor, run `select * from sighting_geo_public;` — show
-  fuzzed coordinates.
-- Then run `select lat, lng from sightings;` as the anon role — show it returns
-  no rows (RLS blocks precise coordinates).
-- Show the seeded orange tabby has **three** sightings tied to **one** cat
-  profile — the persistent-profile concept.
-- Show `select * from audit_logs;` — rows were auto-created by triggers when the
-  seed inserted cases/TNR/adoptions.
+**2:45 — See it land everywhere**
+- On the new cat profile: show the photo, badges, sighting history (area
+  label only), and the case timeline showing "Initial sighting reported."
+- Go to `/map` — the new pin is there immediately (fuzzed location).
+- Go to `/cases` — the new case appears; point out the disabled "Claim
+  case (available in M4)" button — an honest placeholder, not a broken feature.
 
-**2:45 — Matching output shape**
-- Show `select score, reasons from match_suggestions;` for the orange tabby:
-  score 88/100 with per-signal reasons and a "possible match" framing.
-- Explain: in M3 this is produced live by a deterministic engine and always
-  requires human confirmation.
+**3:45 — Data & security backbone**
+- In the Supabase SQL editor: `select * from cats_map_public;` — show only
+  `fuzzed_lat`/`fuzzed_lng` columns exist, never raw coordinates.
+- Then, as the anon role, `select lat, lng from sightings;` — show it returns
+  no rows (RLS blocks precise coordinates entirely).
+- Briefly mention: reporting requires an account in this milestone (documented
+  scope decision — guest reporting + EXIF stripping are planned next).
 
-**3:15 — Where it's going**
-- Briefly show the Report / Map / Cases placeholder pages, which honestly state
-  the interactive flow ships in M2–M5 on top of this backbone.
+**4:20 — Where it's going**
+- Mention M3 (matching engine — show the seeded `match_suggestions` score/
+  reasons as a preview of the output shape) and M4/M5 (claiming, feeding, TNR,
+  adoption, dashboards).
 
 ## Talking points to land the rubric
 
-- **Technical execution**: real Postgres schema, RLS on every table, migrations,
-  passing build + tests.
-- **Innovation**: persistent profiles + explainable matching + human confirmation.
-- **Theme**: end-to-end stray-cat lifecycle; privacy protects the animals.
-- **Security**: RLS, coordinate fuzzing, EXIF stripping, Zod, audit logs.
-- **UX/UI**: warm, mobile-first, accessible, honest placeholders (no fake buttons).
-- **Documentation**: this repo's `docs/` + spec.
+- **Technical execution**: real Postgres schema, RLS, Storage upload with
+  server-side re-validation, a working end-to-end report to map loop, passing
+  build/lint/typecheck/tests.
+- **Innovation**: persistent profiles + explainable matching (preview) +
+  human confirmation framing.
+- **Theme**: full loop from spotting a cat to a live, coordinatable case.
+- **Security**: RLS, coordinate fuzzing, image validation, honest EXIF gap
+  disclosure, audit logs.
+- **UX/UI**: warm, mobile-first, accessible, real loading/empty/error states,
+  no fake buttons — disabled controls are labelled honestly.
+- **Documentation**: this repo's docs and spec, kept in sync with what's
+  actually shipped.

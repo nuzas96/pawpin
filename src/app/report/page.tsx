@@ -1,20 +1,23 @@
-import { PagePlaceholder } from "@/components/layout/PagePlaceholder";
+import { getSessionUser } from "@/lib/auth/guards";
+import { ReportForm } from "@/components/report/ReportForm";
 
 export const metadata = { title: "Report a Stray — PawPin" };
 
-export default function ReportPage() {
+export default async function ReportPage() {
+  const user = await getSessionUser();
+
   return (
-    <PagePlaceholder
-      title="Report a Stray Cat"
-      description="Report a stray cat in under a minute. Guests can report too — no account required. Photos are stored securely and location metadata is stripped for privacy."
-      milestone="M2"
-      plannedFeatures={[
-        "Photo capture / upload with client + server image validation",
-        "Automatic GPS capture with drag-to-adjust manual fallback",
-        "Trait form: urgency, condition, coat colour, pattern, size, age, marks",
-        "Server-side EXIF/GPS metadata stripping before storage",
-        "Runs the matching engine and opens the Possible Match review",
-      ]}
-    />
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold text-brand-800">Report a Stray Cat</h1>
+        <p className="mt-2 max-w-xl text-gray-600">
+          Add a photo, drop a pin, and describe the cat. PawPin creates a new
+          cat profile and rescue case from your sighting right away —
+          automatic matching to existing profiles is coming in the next
+          milestone.
+        </p>
+      </div>
+      <ReportForm isAuthenticated={Boolean(user)} />
+    </div>
   );
 }

@@ -7,9 +7,11 @@ history, and connects volunteers, rescue organisations, and the community to
 coordinate feeding, TNR, medical care, and adoption — all on a privacy-first map.
 
 > **Build status:** this repository currently implements **Milestone M0
-> (Foundation)** and **M1 (Data & Security Backbone)**. The interactive report
-> flow, live map, matching UI, and dashboards land in later milestones. See
-> "Milestone status" below and `.kiro/specs/pawpin/spec.md`.
+> (Foundation)**, **M1 (Data & Security Backbone)**, and **M2 (Report Flow +
+> Storage + Live Map)**. The report form, live map, and case board are real
+> and persist to Supabase. Matching, dashboards, feeding/TNR/adoption
+> workflows, and notifications land in later milestones. See "Milestone
+> status" below and `.kiro/specs/pawpin/spec.md`.
 
 ---
 
@@ -35,7 +37,7 @@ coordinate, and the public map only ever shows **approximate** locations.
 | Styling | Tailwind CSS |
 | Backend | Supabase — PostgreSQL, Auth, Storage, Row Level Security |
 | Validation | Zod (shared client + server) |
-| Map (M2+) | React Leaflet + OpenStreetMap |
+| Map (M2+) | React Leaflet + OpenStreetMap (live) |
 | Matching (M3) | Deterministic heuristic engine (pure TS); optional AI enhancer |
 | Tests | Vitest |
 
@@ -95,6 +97,7 @@ Find the Supabase values in **Dashboard → Project Settings → API**.
    - `supabase/migrations/0003_functions.sql`
    - `supabase/migrations/0004_rls.sql`
    - `supabase/migrations/0005_storage.sql`
+   - `supabase/migrations/0006_report_flow.sql`
 4. (Optional but recommended for the demo) run `supabase/seed.sql`.
 
 > Prefer the CLI? With the [Supabase CLI](https://supabase.com/docs/guides/cli)
@@ -127,20 +130,71 @@ immediately. With confirmation enabled, users must confirm via the emailed link
 
 ---
 
+## How to report a stray cat
+
+1. Sign in or create a free account (M2 requires authentication — see
+   "Known limitations" below).
+2. Go to **Report a Stray** (`/report`).
+3. Add a photo (optional), capture your GPS location or enter lat/lng
+   manually, pick urgency + condition tags, describe the cat's traits, and
+   submit.
+4. PawPin creates a new cat profile, sighting, and case immediately. There is
+   no matching engine yet (M3) — every report currently makes a **new** cat
+   profile even if it might be the same cat as an existing one.
+5. You'll see a confirmation with a link to the new cat profile and the live map.
+
+## How image upload works
+
+- Photos are validated twice: once in the browser (fast feedback) and again
+  on the server (MIME allowlist, 8 MB max, and a magic-byte check that the
+  file's actual bytes match an allowed image format).
+- Accepted files are uploaded to the `cat-photos` Supabase Storage bucket
+  under a random, per-user-scoped path (`<your-user-id>/<random-uuid>.<ext>`).
+  The original filename is never used as a storage path.
+  See `docs/security-report.md` for the EXIF-stripping status.
+
+## How location privacy works
+
+- The **precise** latitude/longitude you capture is stored only in the
+  RLS-protected `sightings` table — never shown on the public map.
+- The public map and cat profile pages read only from privacy-preserving SQL
+  views (`cats_map_public`, `sighting_geo_public`) that apply a coordinate
+  **fuzzing** function before any data leaves the database. Guests and normal
+  users cannot query the raw coordinates at all — RLS blocks it at the
+  database layer, not just in the UI.
+- A "public area label" (e.g. `Area 1.35, 103.82`) is shown instead of an
+  address; it is derived from the fuzzed coordinates and is intentionally
+  coarser than even the map pin.
+
+## How the public map works
+
+- `/map` renders an interactive React Leaflet map with OpenStreetMap tiles.
+- Markers are colour-coded by urgency and show a popup with the cat's coat/
+  pattern, status, urgency, last-seen time, approximate area, traits, and a
+  link to its profile.
+- Filters: urgency, case status, condition tag. Loading, empty, and error
+  states are all implemented.
+
+---
+
 ## Project structure
 
 ```
 src/
   app/            App Router pages + route handlers
-  components/     UI primitives, layout, auth forms
+  actions/        Server Actions (e.g. createSighting)
+  components/     UI primitives, layout, auth, report, map, case components
   lib/
     supabase/     browser / server / admin clients
     auth/         role model + server guards
+    storage/      Supabase Storage upload helpers
+    geo/          location validation + public area label
+    map/          Leaflet config + public map data hook
     validation/   Zod schemas + image validation
     env.ts        env access helper
   types/          hand-authored database types
 supabase/
-  migrations/     ordered SQL (schema, functions, RLS, storage)
+  migrations/     ordered SQL (schema, functions, RLS, storage, report flow)
   seed.sql        demo data
 docs/             architecture, security, testing, demo, checklist
 .kiro/specs/pawpin/spec.md
@@ -159,13 +213,30 @@ for the security model.
 - ✅ **M1 Data & Security Backbone** — full schema migrations, location-privacy
   layer (fuzz function + public view), RLS on every table with helper
   functions, storage policies, Zod validation foundation, seed data.
-- ⏭️ **M2** report flow + live map · **M3** matching engine + profiles ·
-  **M4** coordination workflows · **M5** dashboards + admin · **M6** hardening ·
-  **M7** docs/demo polish.
+- ✅ **M2 Report Flow + Storage + Live Map** — real mobile-first report form
+  (photo, GPS/manual location, urgency, condition tags, traits), Supabase
+  Storage upload with server-side validation, `createSighting` server action
+  (creates cat + sighting + case + case_event), interactive React Leaflet map
+  reading only fuzzed public data, basic read-only case board, basic cat
+  profile page.
+- ⏭️ **M3** matching engine + profiles · **M4** coordination workflows ·
+  **M5** dashboards + admin · **M6** hardening · **M7** docs/demo polish.
 
-## Known limitations (M0/M1)
+## Known limitations (M2)
 
-See `docs/testing.md` and the bottom of `docs/architecture.md` for the full
-list. In brief: interactive report/map/matching/dashboards are placeholders;
-matching is DB-seeded (engine ships in M3); distance uses lat/lng + haversine
-(PostGIS is an optional future upgrade).
+- **Reporting requires an account.** Guest (unauthenticated) reporting is not
+  implemented yet — the current RLS insert policies require `authenticated`.
+  This is a deliberate, documented scope decision (see
+  `docs/security-report.md`); guest reporting is planned for M3/M4.
+- **No matching engine yet.** Every report creates a brand-new cat profile and
+  case, even if it may be the same cat as an existing profile. The M3
+  milestone adds the heuristic matching + review step.
+- **EXIF/GPS metadata stripping is not fully implemented.** Uploaded photos
+  are validated (type/size/magic bytes) but not yet re-encoded to strip
+  embedded EXIF tags. Documented as planned hardening in
+  `docs/security-report.md`.
+- **No public geocoded address.** The "public area label" is a coarse
+  coordinate-grid label, not a real place name (no external geocoding
+  dependency by design).
+- Volunteer/org/admin dashboards, feeding, TNR, adoption, comments, follows,
+  bookmarks, and notifications remain placeholders until M4/M5.

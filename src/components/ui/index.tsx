@@ -41,6 +41,15 @@ export function Input({ className = "", ...props }: ComponentProps<"input">) {
   );
 }
 
+export function Textarea({ className = "", ...props }: ComponentProps<"textarea">) {
+  return (
+    <textarea
+      className={`w-full rounded-lg border border-brand-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200 ${className}`}
+      {...props}
+    />
+  );
+}
+
 export function Label({
   htmlFor,
   children,
