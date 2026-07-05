@@ -27,12 +27,15 @@ locations.
 - **Guest** (unauthenticated, not a stored DB role): view public map (fuzzed),
   report a stray.
 - **Registered user**: report sightings, comment, follow, bookmark.
-- **Volunteer**: claim cases, update progress, feeding schedules/logs, TNR
-  progress; precise location only for claimed/authorised cases.
-- **Rescue organisation**: monitor reports, assign volunteers, manage TNR &
-  adoption, verify outcomes.
-- **Admin**: moderate reports, review flags, approve orgs, close/archive cases,
-  view audit logs.
+- **Volunteer** *(implemented M4)*: claim unclaimed cases; post categorised
+  case updates; create feeding schedules and log feedings; update TNR and
+  adoption status; precise location only for claimed/authorised cases.
+- **Rescue organisation** *(implemented M4)*: same coordination capabilities
+  as a volunteer, scoped to the org's cases; can claim/override a case
+  already claimed by a volunteer in the same org; org dashboard shows
+  active/claimed/unclaimed counts and TNR/adoption pipelines.
+- **Admin**: all volunteer/org capabilities on every case, plus (M5) moderate
+  reports, review flags, approve orgs, close/archive cases, view audit logs.
 
 ## 5. Data model
 
@@ -40,6 +43,14 @@ Tables (UUID PKs, `timestamptz`, enums, indexes): `profiles`, `organizations`,
 `cats`, `sightings`, `photos`, `cases`, `case_events`, `feeding_schedules`,
 `feeding_logs`, `tnr_records`, `adoptions`, `comments`, `follows`, `bookmarks`,
 `notifications`, `moderation_flags`, `audit_logs`, `match_suggestions`.
+
+M4 additions: `feeding_schedules.frequency` (once/daily/weekly/custom) +
+`next_feeding_at`; `feeding_logs.food_type`; `tnr_status` enum expanded to
+`not_started → trap_planned → trapped → surgery_scheduled → neutered →
+ear_tipped → released` (plus legacy `recovering`/`returned` values retained
+for backward compatibility) with `tnr_records.scheduled_at`; `adoptions.status`
+constrained to `not_available → intake → available → application_received →
+matched → adopted`.
 
 Location privacy: precise coords in `sightings`; `fuzz_coordinate()` +
 `sighting_geo_public` view expose only approximate coords per-sighting;
@@ -57,6 +68,12 @@ See `supabase/migrations/` for the authoritative schema.
 - Zod validation (client + server); image validation (MIME/size/magic bytes).
 - Plain-text user content; audit logs insert-only + admin-read.
 - No unnecessary PII; service-role key server-only; no committed secrets.
+- Role-based coordination writes (claim, case update, feeding, TNR, adoption)
+  run through `SECURITY DEFINER` RPCs that perform their own authorization
+  check and all related writes atomically — not through direct table access
+  relying solely on RLS — because RLS's row-scoped policies cannot express
+  "any volunteer may claim this case" before the claim exists. See
+  `docs/architecture.md` §3e and `docs/security-report.md` §4b.
 
 ## 7. Matching engine (M3, implemented)
 
@@ -85,7 +102,8 @@ full design and `src/lib/matching/` for the implementation.
 ## 8. Pages
 
 Landing, Live map, Report cat, Matching review (modal), Cat profile, Case board,
-Volunteer dashboard, Org dashboard, Admin dashboard, Auth (sign in/up), Profile,
+Volunteer dashboard *(implemented M4)*, Org dashboard *(implemented M4)*,
+Admin dashboard *(placeholder until M5)*, Auth (sign in/up), Profile,
 About/Impact.
 
 ## 9. Milestones
@@ -116,8 +134,21 @@ About/Impact.
   `match_suggestions` (`pending` → `linked`/`rejected`/`new_profile_created`);
   the cat profile page is upgraded with a "seen N times"/first-seen/last-seen
   stats bar, a linked-photo gallery, and a persistent-profile explanation.
-- **M4** coordination workflows · **M5** dashboards + admin · **M6**
-  hardening · **M7** docs/demo polish.
+- **M4 Volunteer Coordination, Feeding, TNR, Adoption, Community Case
+  Workflow** *(implemented)* — six `SECURITY DEFINER` RPCs
+  (`claim_case`, `add_case_update`, `create_feeding_schedule`,
+  `add_feeding_log`, `update_tnr_record`, `update_adoption_record`,
+  migration 0009) each performing self-authorization + atomic writes +
+  `notify_followers()`; role-gated claim flow with double-claim prevention
+  and an explicit admin/org override; full feeding schedule/log, TNR
+  (7-status workflow), and adoption (6-status workflow) tracking with
+  never-regress-a-resolved-outcome safety; categorised case updates;
+  comments/follow/bookmark (direct table writes — RLS ownership checks are
+  already sufficient); database-backed notifications with a navbar bell;
+  real volunteer and organisation dashboards; upgraded case board (claimed
+  filter + quick badges) and cat profile (claim button, feeding/TNR/adoption
+  sections, case update form, comments, combined timeline).
+- **M5** dashboards + admin · **M6** hardening · **M7** docs/demo polish.
 
 ## 10. Acceptance criteria
 
@@ -170,3 +201,38 @@ About/Impact.
 - No UI or generated text uses forbidden certainty language ("same cat
   detected", "AI identified the cat", etc.) — covered by an automated test.
 - `npm run build`, `lint`, `typecheck`, and `test` all pass (46/46 tests).
+
+**M4**
+- A volunteer/org/admin can claim an unclaimed case; a plain registered user
+  sees an explanatory message instead of a claim button, never a broken or
+  hidden control.
+- Claiming atomically sets `claimed_by`, promotes `reported → active`,
+  appends a "Case claimed by volunteer" `case_events` row, and notifies the
+  cat's followers — verified via the `claim_case` RPC.
+- Double-claiming by a different, non-admin/non-org volunteer is rejected;
+  an admin or a member of the case's own organisation may override.
+- An authorised carer can create a feeding schedule (frequency, description,
+  optional location/next-feeding-time) and log feedings (food type, notes);
+  both appear on the cat profile and in the case timeline.
+- An authorised carer can move a TNR record through all 7 statuses; reaching
+  `released` promotes the cat/case status to `released` unless already
+  `adopted`/`closed`.
+- An authorised carer can move an adoption record through all 6 statuses;
+  reaching `adopted` promotes the cat status and closes the case unless
+  already closed. Adopter contact is never rendered back by the UI and is
+  RLS-restricted to admin/authorised-carer reads.
+- Any authenticated user can comment (rendered as plain text, never HTML),
+  follow/unfollow, and bookmark/unbookmark a cat; state persists and is
+  reflected correctly after a page reload.
+- Notifications are created for case claims, case updates, TNR updates,
+  adoption updates, and new linked sightings, and are visible via a navbar
+  bell that marks them read on open.
+- `/dashboard/volunteer` and `/dashboard/org` show real data (claimed cases,
+  open urgent cases, feeding/TNR tasks, pipeline breakdowns) with no mocked
+  content; both are role-guarded.
+- `/cases` supports status/urgency/claimed filters and shows quick badges
+  (feeding/TNR/adoption active, urgent, unclaimed).
+- Every coordination write is re-validated with Zod and independently
+  re-checks authorization server-side (RPC or RLS ownership check) — no
+  write trusts a client-supplied role or ownership claim.
+- `npm run build`, `lint`, `typecheck`, and `test` all pass (73/73 tests).

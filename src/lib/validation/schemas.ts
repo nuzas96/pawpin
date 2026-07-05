@@ -20,7 +20,8 @@ export const sizeClassEnum = z.enum(["kitten", "small", "medium", "large"]);
 export const ageGroupEnum = z.enum(["kitten", "juvenile", "adult", "senior", "unknown"]);
 export const urgencyEnum = z.enum(["low", "medium", "high", "critical"]);
 export const tnrStatusEnum = z.enum([
-  "not_started", "trapped", "neutered", "recovering", "returned",
+  "not_started", "trap_planned", "trapped", "surgery_scheduled", "neutered",
+  "ear_tipped", "recovering", "returned", "released",
 ]);
 export const caseStatusEnum = z.enum([
   "reported", "under_review", "active", "tnr_in_progress", "medical",
@@ -34,6 +35,13 @@ export const conditionTagEnum = z.enum([
   "friendly", "fearful", "needs_feeding", "tnr_needed",
 ]);
 export type ConditionTag = z.infer<typeof conditionTagEnum>;
+export const feedingFrequencyEnum = z.enum(["once", "daily", "weekly", "custom"]);
+export const adoptionStatusEnum = z.enum([
+  "not_available", "intake", "available", "application_received", "matched", "adopted",
+]);
+export const caseUpdateCategoryEnum = z.enum([
+  "progress", "medical", "feeding", "tnr", "adoption", "general",
+]);
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -130,34 +138,57 @@ export const commentSchema = z.object({
 export type CommentInput = z.infer<typeof commentSchema>;
 
 // ---------------------------------------------------------------------------
-// Case update
+// Case claim (M4)
+// ---------------------------------------------------------------------------
+export const claimCaseSchema = z.object({
+  caseId: z.string().uuid(),
+});
+export type ClaimCaseInput = z.infer<typeof claimCaseSchema>;
+
+// ---------------------------------------------------------------------------
+// Case update (M4) — free-text note attached to a category, appended to the
+// case timeline. Rendered as plain text only, never HTML.
 // ---------------------------------------------------------------------------
 export const caseUpdateSchema = z.object({
   caseId: z.string().uuid(),
-  status: caseStatusEnum,
-  note: z.string().trim().max(1000).optional(),
+  category: caseUpdateCategoryEnum,
+  note: z.string().trim().min(1, "Update cannot be empty.").max(1000),
 });
 export type CaseUpdateInput = z.infer<typeof caseUpdateSchema>;
 
 // ---------------------------------------------------------------------------
-// Feeding log
+// Feeding schedule (M4)
+// ---------------------------------------------------------------------------
+export const feedingScheduleSchema = z.object({
+  caseId: z.string().uuid(),
+  frequency: feedingFrequencyEnum.default("daily"),
+  scheduleText: z.string().trim().min(1, "Describe the feeding schedule.").max(300),
+  locationNote: z.string().trim().max(200).optional(),
+  nextFeedingAt: z.string().datetime().optional(),
+});
+export type FeedingScheduleInput = z.infer<typeof feedingScheduleSchema>;
+
+// ---------------------------------------------------------------------------
+// Feeding log (M4 — adds foodType)
 // ---------------------------------------------------------------------------
 export const feedingLogSchema = z.object({
   caseId: z.string().uuid(),
   scheduleId: z.string().uuid().optional(),
   fedAt: z.string().datetime().optional(),
+  foodType: z.string().trim().max(60).optional(),
   notes: z.string().trim().max(500).optional(),
   photoId: z.string().uuid().optional(),
 });
 export type FeedingLogInput = z.infer<typeof feedingLogSchema>;
 
 // ---------------------------------------------------------------------------
-// TNR record
+// TNR record (M4 — full workflow)
 // ---------------------------------------------------------------------------
 export const tnrRecordSchema = z.object({
   caseId: z.string().uuid(),
   tnrStatus: tnrStatusEnum,
   clinic: z.string().trim().max(120).optional(),
+  scheduledAt: z.string().datetime().optional(),
   trappedAt: z.string().datetime().optional(),
   neuteredAt: z.string().datetime().optional(),
   returnedAt: z.string().datetime().optional(),
@@ -166,14 +197,27 @@ export const tnrRecordSchema = z.object({
 export type TnrRecordInput = z.infer<typeof tnrRecordSchema>;
 
 // ---------------------------------------------------------------------------
-// Adoption record (minimal PII)
+// Adoption record (M4 — full workflow, minimal PII)
 // ---------------------------------------------------------------------------
 export const adoptionSchema = z.object({
   catId: z.string().uuid(),
+  status: adoptionStatusEnum,
   adopterContact: z.string().trim().max(200).optional(),
-  status: z.enum(["inquiry", "pending", "approved", "finalized", "cancelled"]).default("inquiry"),
 });
 export type AdoptionInput = z.infer<typeof adoptionSchema>;
+
+// ---------------------------------------------------------------------------
+// Follow / bookmark (M4 — simple, own-row-only actions)
+// ---------------------------------------------------------------------------
+export const followCatSchema = z.object({
+  catId: z.string().uuid(),
+});
+export type FollowCatInput = z.infer<typeof followCatSchema>;
+
+export const bookmarkCatSchema = z.object({
+  catId: z.string().uuid(),
+});
+export type BookmarkCatInput = z.infer<typeof bookmarkCatSchema>;
 
 // ---------------------------------------------------------------------------
 // Moderation flag

@@ -4,7 +4,21 @@ import {
   detectImageType,
   MAX_IMAGE_BYTES,
 } from "@/lib/validation/image";
-import { signUpSchema, sightingSchema, commentSchema, linkSightingSchema, createCatFromSightingSchema } from "@/lib/validation/schemas";
+import {
+  signUpSchema,
+  sightingSchema,
+  commentSchema,
+  linkSightingSchema,
+  createCatFromSightingSchema,
+  claimCaseSchema,
+  caseUpdateSchema,
+  feedingScheduleSchema,
+  feedingLogSchema,
+  tnrRecordSchema,
+  adoptionSchema,
+  followCatSchema,
+  bookmarkCatSchema,
+} from "@/lib/validation/schemas";
 
 describe("validateImageFile", () => {
   it("accepts a valid jpeg under the size limit", () => {
@@ -176,5 +190,161 @@ describe("createCatFromSightingSchema", () => {
       traits: { coatColor: "rainbow", furPattern: "tabby", sizeClass: "medium" },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+
+describe("claimCaseSchema", () => {
+  it("requires a valid case UUID", () => {
+    expect(claimCaseSchema.safeParse({ caseId: "not-a-uuid" }).success).toBe(false);
+  });
+  it("accepts a valid case id", () => {
+    expect(claimCaseSchema.safeParse({ caseId: "11111111-1111-1111-1111-111111111111" }).success).toBe(true);
+  });
+});
+
+describe("caseUpdateSchema", () => {
+  it("rejects an empty note", () => {
+    const result = caseUpdateSchema.safeParse({
+      caseId: "11111111-1111-1111-1111-111111111111",
+      category: "progress",
+      note: "",
+    });
+    expect(result.success).toBe(false);
+  });
+  it("rejects an invalid category", () => {
+    const result = caseUpdateSchema.safeParse({
+      caseId: "11111111-1111-1111-1111-111111111111",
+      category: "gossip",
+      note: "hi",
+    });
+    expect(result.success).toBe(false);
+  });
+  it("accepts a valid update", () => {
+    const result = caseUpdateSchema.safeParse({
+      caseId: "11111111-1111-1111-1111-111111111111",
+      category: "medical",
+      note: "Vet visit scheduled.",
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("feedingScheduleSchema", () => {
+  it("rejects an empty schedule description", () => {
+    const result = feedingScheduleSchema.safeParse({
+      caseId: "11111111-1111-1111-1111-111111111111",
+      scheduleText: "",
+    });
+    expect(result.success).toBe(false);
+  });
+  it("defaults frequency to daily and accepts a valid schedule", () => {
+    const result = feedingScheduleSchema.safeParse({
+      caseId: "11111111-1111-1111-1111-111111111111",
+      scheduleText: "Every evening at 7pm",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.frequency).toBe("daily");
+  });
+  it("rejects an invalid frequency", () => {
+    const result = feedingScheduleSchema.safeParse({
+      caseId: "11111111-1111-1111-1111-111111111111",
+      frequency: "hourly",
+      scheduleText: "Every hour",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("feedingLogSchema (M4 foodType)", () => {
+  it("accepts a log with a food type", () => {
+    const result = feedingLogSchema.safeParse({
+      caseId: "11111111-1111-1111-1111-111111111111",
+      foodType: "Wet food",
+      notes: "Ate well",
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("tnrRecordSchema (expanded M4 statuses)", () => {
+  it("accepts each new M4 status value", () => {
+    const statuses = [
+      "not_started", "trap_planned", "trapped", "surgery_scheduled",
+      "neutered", "ear_tipped", "released",
+    ];
+    for (const tnrStatus of statuses) {
+      const result = tnrRecordSchema.safeParse({
+        caseId: "11111111-1111-1111-1111-111111111111",
+        tnrStatus,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects an invalid TNR status", () => {
+    const result = tnrRecordSchema.safeParse({
+      caseId: "11111111-1111-1111-1111-111111111111",
+      tnrStatus: "vacationing",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("adoptionSchema (M4 workflow)", () => {
+  it("accepts each valid adoption status", () => {
+    const statuses = ["not_available", "intake", "available", "application_received", "matched", "adopted"];
+    for (const status of statuses) {
+      const result = adoptionSchema.safeParse({
+        catId: "11111111-1111-1111-1111-111111111111",
+        status,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects an invalid adoption status", () => {
+    const result = adoptionSchema.safeParse({
+      catId: "11111111-1111-1111-1111-111111111111",
+      status: "inquiry",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts an optional adopter contact under the max length", () => {
+    const result = adoptionSchema.safeParse({
+      catId: "11111111-1111-1111-1111-111111111111",
+      status: "matched",
+      adopterContact: "+1 555-0100",
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("followCatSchema / bookmarkCatSchema", () => {
+  it("rejects an invalid cat id", () => {
+    expect(followCatSchema.safeParse({ catId: "not-a-uuid" }).success).toBe(false);
+    expect(bookmarkCatSchema.safeParse({ catId: "not-a-uuid" }).success).toBe(false);
+  });
+  it("accepts a valid cat id", () => {
+    const catId = "11111111-1111-1111-1111-111111111111";
+    expect(followCatSchema.safeParse({ catId }).success).toBe(true);
+    expect(bookmarkCatSchema.safeParse({ catId }).success).toBe(true);
+  });
+});
+
+describe("commentSchema (plain text contract)", () => {
+  it("does not strip or escape input — the schema itself only validates length; rendering (not schema) enforces plain-text safety", () => {
+    const result = commentSchema.safeParse({
+      catId: "11111111-1111-1111-1111-111111111111",
+      body: "<script>alert(1)</script>",
+    });
+    // The schema allows the raw string through — safety comes from rendering
+    // as text (React auto-escaping), not from schema-level sanitisation.
+    // This test documents that contract explicitly.
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.body).toBe("<script>alert(1)</script>");
+    }
   });
 });

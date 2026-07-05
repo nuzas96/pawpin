@@ -44,11 +44,24 @@ export type SizeClass = "kitten" | "small" | "medium" | "large";
 export type AgeGroup = "kitten" | "juvenile" | "adult" | "senior" | "unknown";
 export type TnrStatus =
   | "not_started"
+  | "trap_planned"
   | "trapped"
+  | "surgery_scheduled"
   | "neutered"
+  | "ear_tipped"
   | "recovering"
-  | "returned";
+  | "returned"
+  | "released";
 export type FeedingType = "scheduled" | "ad_hoc";
+export type FeedingFrequency = "once" | "daily" | "weekly" | "custom";
+export type AdoptionStatus =
+  | "not_available"
+  | "intake"
+  | "available"
+  | "application_received"
+  | "matched"
+  | "adopted";
+export type CaseUpdateCategory = "progress" | "medical" | "feeding" | "tnr" | "adoption" | "general";
 export type FlagReason =
   | "spam"
   | "inappropriate"
@@ -232,6 +245,8 @@ export interface Database {
           created_by: string | null;
           schedule_text: string;
           location_note: string | null;
+          frequency: FeedingFrequency;
+          next_feeding_at: string | null;
           active: boolean;
         } & Timestamps;
         Insert: {
@@ -240,6 +255,8 @@ export interface Database {
           created_by?: string | null;
           schedule_text: string;
           location_note?: string | null;
+          frequency?: FeedingFrequency;
+          next_feeding_at?: string | null;
           active?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["feeding_schedules"]["Insert"]>;
@@ -252,6 +269,7 @@ export interface Database {
           schedule_id: string | null;
           fed_by: string | null;
           fed_at: string;
+          food_type: string | null;
           notes: string | null;
           photo_id: string | null;
           created_at: string;
@@ -262,6 +280,7 @@ export interface Database {
           schedule_id?: string | null;
           fed_by?: string | null;
           fed_at?: string;
+          food_type?: string | null;
           notes?: string | null;
           photo_id?: string | null;
           created_at?: string;
@@ -275,6 +294,7 @@ export interface Database {
           case_id: string;
           tnr_status: TnrStatus;
           clinic: string | null;
+          scheduled_at: string | null;
           trapped_at: string | null;
           neutered_at: string | null;
           returned_at: string | null;
@@ -285,6 +305,7 @@ export interface Database {
           case_id: string;
           tnr_status?: TnrStatus;
           clinic?: string | null;
+          scheduled_at?: string | null;
           trapped_at?: string | null;
           neutered_at?: string | null;
           returned_at?: string | null;
@@ -298,7 +319,7 @@ export interface Database {
           id: string;
           cat_id: string;
           adopter_contact: string | null;
-          status: string;
+          status: AdoptionStatus;
           finalized_at: string | null;
           handled_by: string | null;
         } & Timestamps;
@@ -306,7 +327,7 @@ export interface Database {
           id?: string;
           cat_id: string;
           adopter_contact?: string | null;
-          status?: string;
+          status?: AdoptionStatus;
           finalized_at?: string | null;
           handled_by?: string | null;
         };
@@ -525,6 +546,52 @@ export interface Database {
         };
         Returns: { result_cat_id: string; result_case_id: string }[];
       };
+      claim_case: {
+        Args: { p_case_id: string };
+        Returns: { result_case_id: string; result_claimed_by: string }[];
+      };
+      add_case_update: {
+        Args: { p_case_id: string; p_category: string; p_note: string };
+        Returns: string;
+      };
+      create_feeding_schedule: {
+        Args: {
+          p_case_id: string;
+          p_frequency: FeedingFrequency;
+          p_schedule_text: string;
+          p_location_note: string | null;
+          p_next_feeding_at: string | null;
+        };
+        Returns: string;
+      };
+      add_feeding_log: {
+        Args: {
+          p_case_id: string;
+          p_schedule_id: string | null;
+          p_fed_at: string | null;
+          p_food_type: string | null;
+          p_notes: string | null;
+          p_photo_id: string | null;
+        };
+        Returns: string;
+      };
+      update_tnr_record: {
+        Args: {
+          p_case_id: string;
+          p_tnr_status: TnrStatus;
+          p_clinic: string | null;
+          p_scheduled_at: string | null;
+          p_trapped_at: string | null;
+          p_neutered_at: string | null;
+          p_returned_at: string | null;
+          p_notes: string | null;
+        };
+        Returns: string;
+      };
+      update_adoption_record: {
+        Args: { p_cat_id: string; p_status: string; p_adopter_contact: string | null };
+        Returns: string;
+      };
     };
     Enums: {
       user_role: UserRole;
@@ -536,6 +603,7 @@ export interface Database {
       age_group: AgeGroup;
       tnr_status: TnrStatus;
       feeding_type: FeedingType;
+      feeding_frequency: FeedingFrequency;
       flag_reason: FlagReason;
     };
   };

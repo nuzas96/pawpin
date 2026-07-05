@@ -4,19 +4,23 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { CaseStatus, UrgencyLevel } from "@/types/database";
 import { Badge, Card } from "@/components/ui";
-import { Button } from "@/components/ui/Button";
+import { ClaimCaseButton } from "@/components/cases/ClaimCaseButton";
 
 export type CaseListItem = {
   id: string;
   status: CaseStatus;
   priority: UrgencyLevel;
   opened_at: string;
+  claimed_by: string | null;
   cat: {
     id: string;
     coat_color: string;
     fur_pattern: string;
     status: CaseStatus;
   } | null;
+  feedingActive: boolean;
+  tnrActive: boolean;
+  adoptionActive: boolean;
 };
 
 const STATUS_OPTIONS: (CaseStatus | "all")[] = [
@@ -24,24 +28,37 @@ const STATUS_OPTIONS: (CaseStatus | "all")[] = [
   "ready_for_adoption", "adopted", "released", "closed",
 ];
 const URGENCY_OPTIONS: (UrgencyLevel | "all")[] = ["all", "low", "medium", "high", "critical"];
+const CLAIM_OPTIONS = ["all", "unclaimed", "claimed"] as const;
+type ClaimFilter = (typeof CLAIM_OPTIONS)[number];
 
 function toLabel(value: string) {
   if (value === "all") return "All";
   return value.charAt(0).toUpperCase() + value.slice(1).replace(/_/g, " ");
 }
 
-export function CaseList({ cases }: { cases: CaseListItem[] }) {
+export function CaseList({
+  cases,
+  currentUserId,
+  canClaim,
+}: {
+  cases: CaseListItem[];
+  currentUserId: string | null;
+  canClaim: boolean;
+}) {
   const [status, setStatus] = useState<CaseStatus | "all">("all");
   const [urgency, setUrgency] = useState<UrgencyLevel | "all">("all");
+  const [claimFilter, setClaimFilter] = useState<ClaimFilter>("all");
 
   const filtered = useMemo(
     () =>
       cases.filter((c) => {
         if (status !== "all" && c.status !== status) return false;
         if (urgency !== "all" && c.priority !== urgency) return false;
+        if (claimFilter === "unclaimed" && c.claimed_by) return false;
+        if (claimFilter === "claimed" && !c.claimed_by) return false;
         return true;
       }),
-    [cases, status, urgency]
+    [cases, status, urgency, claimFilter]
   );
 
   return (
@@ -71,6 +88,18 @@ export function CaseList({ cases }: { cases: CaseListItem[] }) {
             ))}
           </select>
         </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium text-gray-700">Claimed?</span>
+          <select
+            value={claimFilter}
+            onChange={(e) => setClaimFilter(e.target.value as ClaimFilter)}
+            className="rounded-lg border border-brand-200 bg-white px-3 py-1.5 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+          >
+            {CLAIM_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>{toLabel(opt)}</option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {filtered.length === 0 ? (
@@ -84,6 +113,11 @@ export function CaseList({ cases }: { cases: CaseListItem[] }) {
               <div className="flex flex-wrap gap-2">
                 <Badge>{toLabel(c.status)}</Badge>
                 <Badge>{toLabel(c.priority)} urgency</Badge>
+                {c.priority === "critical" && <Badge>🚨 Urgent</Badge>}
+                {!c.claimed_by && <Badge>Unclaimed</Badge>}
+                {c.feedingActive && <Badge>🍽️ Feeding active</Badge>}
+                {c.tnrActive && <Badge>✂️ TNR active</Badge>}
+                {c.adoptionActive && <Badge>🏠 Adoption active</Badge>}
               </div>
               <p className="mt-3 font-medium text-gray-900">
                 {c.cat ? `${toLabel(c.cat.coat_color)} ${toLabel(c.cat.fur_pattern)} cat` : "Cat profile unavailable"}
@@ -98,9 +132,15 @@ export function CaseList({ cases }: { cases: CaseListItem[] }) {
                   </Link>
                 )}
               </div>
-              <Button type="button" variant="secondary" disabled className="mt-3 w-full cursor-not-allowed opacity-60">
-                Claim case (available in M4)
-              </Button>
+              {currentUserId && (
+                <div className="mt-3">
+                  <ClaimCaseButton
+                    caseId={c.id}
+                    eligible={canClaim}
+                    alreadyClaimedByMe={c.claimed_by === currentUserId}
+                  />
+                </div>
+              )}
             </Card>
           ))}
         </div>

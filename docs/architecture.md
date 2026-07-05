@@ -48,8 +48,16 @@ Core entities:
 - **sightings** — individual reports with **precise** lat/lng (RLS-protected).
 - **photos** — storage metadata (EXIF stripping documented as planned hardening).
 - **cases** — coordination unit tied to a cat; claimed by a volunteer / org.
-- **case_events** — append-only timeline.
-- **feeding_schedules / feeding_logs / tnr_records / adoptions** — workflows.
+- **case_events** — append-only timeline; every M4 coordination RPC appends
+  a typed event here (`case_claimed`, `case_update_<category>`,
+  `feeding_schedule_created`, `feeding_logged`, `tnr_update`,
+  `adoption_update`, plus the M3 matching events).
+- **feeding_schedules** (`frequency`: once/daily/weekly/custom,
+  `next_feeding_at`) **/ feeding_logs** (`food_type`) **/ tnr_records**
+  (`tnr_status`: not_started → trap_planned → trapped → surgery_scheduled →
+  neutered → ear_tipped → released, plus `scheduled_at`) **/ adoptions**
+  (`status`: not_available → intake → available → application_received →
+  matched → adopted, adopter contact restricted by RLS) — the M4 workflows.
 - **comments** (plain text), **follows**, **bookmarks**, **notifications**.
 - **moderation_flags**, **audit_logs** (insert-only, admin-read).
 - **match_suggestions** — persisted matching output + human-confirmation trail
@@ -134,18 +142,23 @@ specific message in the form's error state rather than a generic failure.
   popup with coat/pattern, status, urgency, last-seen time, public area label,
   distinguishing marks, and a link to the cat's profile.
 
-## 3c. Case board & cat profile (M2/M3)
+## 3c. Case board & cat profile (M2–M4)
 
-- `/cases` is a server component that reads `cases` joined with `cats` and
-  renders `CaseList` (client component) with status/urgency filters. The
-  "Claim case" button is rendered **disabled** with the label "available in
-  M4" — no fake interactive workflow.
-- `/cats/[catId]` (upgraded in M3) is a server component showing the cat's
-  primary photo, status/urgency/trait badges, a stats bar ("Seen N times",
-  first seen, last seen), a gallery of photos linked from any sighting of this
-  cat, sighting history (via `sighting_geo_public`, fuzzed only), case timeline
-  (via `case_events`), and an explicit note that this is a **persistent cat
-  profile** — the core differentiator PawPin is built around.
+- `/cases` is a server component that reads `cases` joined with `cats`, plus
+  batch queries for active feeding schedules, in-progress TNR records, and
+  active adoption records, and renders `CaseList` (client component) with
+  status/urgency/claimed filters and quick badges (🚨 Urgent, 🍽️ Feeding
+  active, ✂️ TNR active, 🏠 Adoption active). The claim button
+  (`ClaimCaseButton`) is real as of M4 — see §3e.
+- `/cats/[catId]` is a server component showing the cat's primary photo,
+  status/urgency/trait badges, a stats bar ("Seen N times", first seen, last
+  seen), case ownership and a claim button, feeding schedule/history, TNR
+  status/form, adoption status/form, a case-update form, comments, follow/
+  bookmark buttons, a gallery of photos linked from any sighting, and a
+  combined timeline (sightings + case_events + feeding_logs — see
+  `src/lib/cases/timeline.ts`). All management forms are gated by an
+  `isAuthorisedCarer` server-side check (§3e) so the page never renders
+  interactive controls a viewer cannot actually use.
 
 ## 3d. Matching decision actions (M3)
 
@@ -187,6 +200,66 @@ exactly this). The RPCs instead:
 Direct table access from the browser/anon remains locked down by RLS; the
 RPCs are the one narrow, audited path for a reporter to resolve their own
 pending sighting.
+
+## 3e. Volunteer coordination, feeding, TNR, adoption (M4)
+
+The M3 audit established a pattern — writes that need role-based
+authorization beyond simple row ownership must run inside a `SECURITY
+DEFINER` RPC with its own explicit checks, not as a sequence of table writes
+relying on RLS — and M4 applies it to every coordination write (migration
+0009):
+
+- **`claim_case(case_id)`** — requires the caller's role to be
+  volunteer/org/admin (checked via `current_user_role()`); rejects
+  double-claiming by a different volunteer unless the caller is an admin or a
+  member of the case's own organisation (an explicit override); atomically
+  sets `claimed_by`, promotes `reported → active`, appends a "Case claimed by
+  volunteer" `case_events` row, and notifies the cat's followers.
+- **`add_case_update(case_id, category, note)`** — requires `has_case_access`
+  or admin; appends a `case_update_<category>` event (category is one of
+  progress/medical/feeding/tnr/adoption/general) and notifies followers.
+- **`create_feeding_schedule(...)` / `add_feeding_log(...)`** — require
+  `has_case_access` or admin; append "Feeding schedule created" / "Feeding
+  completed" timeline events.
+- **`update_tnr_record(...)`** — requires `has_case_access` or admin; upserts
+  the case's TNR record and appends a "TNR status updated to X" event. If the
+  new status is `released`, it promotes the cat's and case's `status` to
+  `released` **unless the cat is already `adopted` or `closed`** — a resolved
+  outcome is never regressed.
+- **`update_adoption_record(cat_id, status, adopter_contact)`** — requires
+  `has_cat_access` or admin; upserts the cat's adoption record and appends an
+  "Adoption status updated to X" event. If the new status is `adopted`, it
+  promotes the cat's status and closes the most recent case **unless that
+  case is already `closed`**.
+- **`notify_followers(cat_id, type, payload, actor_id)`** — internal helper
+  (not exposed to clients) used by every RPC above, plus a
+  `notify_on_cat_status_change` trigger on `cats`, to insert a `notifications`
+  row for every follower except the actor who triggered the change (no
+  self-notifications).
+
+All six RPCs are granted to `authenticated` only (never `anon`) and are
+called from thin, Zod-validated server actions
+(`src/actions/{cases,feeding,tnr,adoption}.ts`) that translate a raw
+Postgres error (e.g. "Only volunteers, organisations, or admins can claim a
+case") into a clear, role-aware message shown in the UI.
+
+**Comments, follows, bookmarks** are the one category of M4 write that does
+**not** need an RPC: `comments_insert` only checks `author_id = auth.uid()`,
+and `follows_all`/`bookmarks_all` only check `user_id = auth.uid()` — every
+authenticated user already satisfies these for their own rows, so
+`src/actions/comments.ts` and `src/actions/follows.ts` are plain, direct
+table writes.
+
+**Notifications** are pull-based: `NotificationsBell`
+(`src/components/layout/NotificationsBell.tsx`) fetches the current user's 10
+most recent notifications on mount using the **browser** Supabase client
+(RLS-scoped to `user_id = auth.uid()`), and marks them read when the dropdown
+opens. There is no real-time/websocket layer in this milestone (see §8).
+
+**Dashboards** (`/dashboard/volunteer`, `/dashboard/org`) are server
+components built entirely from real queries — claimed cases, unclaimed
+urgent cases, active feeding schedules, in-progress TNR records, and (for
+org) a status-count pipeline for TNR and adoption — with no mocked data.
 
 ## 4. Auth & roles
 
@@ -323,12 +396,30 @@ any external API key.
   cat never overwrites or removes existing distinguishing marks; it only
   bumps `last_seen_at` when the sighting is newer. This favours data safety
   over completeness for this milestone (see §8).
+- **SECURITY DEFINER RPCs for every M4 coordination write**: claim, case
+  update, feeding schedule/log, TNR, and adoption all require role-based
+  authorization that a plain reporter/viewer does not have — the same class
+  of problem the M3 audit found in the matching decision actions. Rather than
+  patch RLS policies per-action (fragile, and prone to the exact "reporter
+  passes their own check but the *other* write in the same flow fails"
+  no-op/throw bug found in M3), every M4 write is one atomic, self-authorizing
+  RPC. Comments/follows/bookmarks are the exception — their RLS check
+  (`author_id`/`user_id = auth.uid()`) is already sufficient for a direct
+  table write, so no RPC is used there.
+- **Never regress a resolved outcome**: `update_tnr_record` and
+  `update_adoption_record` both check the cat's/case's *current* status
+  before promoting it — reaching `released` or `adopted` never overwrites an
+  already-`adopted`/`closed` state. This prevents a stale or out-of-order
+  update from undoing a finished outcome.
+- **Pull-based notifications, not real-time**: a `notifications` table plus a
+  `notify_followers()` SQL helper called by every coordination RPC keeps the
+  feature entirely database-backed, with no websocket/Realtime subscription
+  infrastructure to run or explain to judges. The navbar bell fetches on
+  mount and marks-all-read on open, which is enough to demonstrate the
+  feature without the operational complexity of a live channel.
 
-## 8. Known limitations (M0–M3)
+## 8. Known limitations (M0–M4)
 
-- Volunteer/org/admin dashboards, feeding, TNR, adoption, comments, follows,
-  bookmarks, and notifications are still honest placeholders — they ship in
-  M4/M5.
 - Guest (unauthenticated) reporting is not implemented; see the tradeoff above.
 - EXIF/GPS metadata stripping is not fully implemented — uploads are validated
   (MIME/size/magic bytes) but not yet re-encoded to strip embedded tags. See
@@ -339,7 +430,19 @@ any external API key.
   let a reporter add a "new mark seen this time" that gets merged into the
   cat's profile; the report form's trait fields describe the *cat*, not
   per-sighting deltas.
+- **Admin dashboard remains a placeholder.** Full moderation (hiding
+  comments, resolving flags), organisation approval, and an audit-log viewer
+  are M5.
+- **No case reassignment UI.** An org member can see and self-claim an
+  unclaimed case, but assigning a *specific* case to a *specific* volunteer
+  (beyond self-claiming) is not implemented — the org dashboard says so
+  directly rather than hiding the gap.
+- **Notifications are pull-based, not real-time** — no websocket/live push;
+  the bell fetches on page load.
+- **`isAuthorisedCarer` on the cat profile page is a server-side
+  approximation** of `has_case_access`/`has_cat_access` used only to decide
+  whether to *render* a management form. It is not the security boundary —
+  every write is independently re-checked by its RPC — so a mismatch here can
+  only hide or show a form incorrectly, never bypass an authorization check.
 - No rate limiting yet (planned M6).
 - Distance/proximity uses a bounding-box index + haversine, not PostGIS.
-- Case board "claim" actions are visibly disabled, not hidden — this is
-  intentional so the future workflow is legible, not a broken button.

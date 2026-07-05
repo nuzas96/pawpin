@@ -1,7 +1,7 @@
 # PawPin — Security Report
 
 This document describes PawPin's threat model and the controls implemented
-through Milestone M3. Security is a layered, defense-in-depth design with
+through Milestone M4. Security is a layered, defense-in-depth design with
 Postgres Row Level Security (RLS) as the authoritative boundary.
 
 ## 1. Threat model
@@ -10,13 +10,15 @@ Postgres Row Level Security (RLS) as the authoritative boundary.
 |---|---|---|
 | Precise cat locations | De-anonymising a stray's location enables harm (poisoning, abuse, theft) | RLS + SQL coordinate fuzzing; precise coords never exposed to guests/users, including during matching (see §4a) |
 | User accounts | Privilege escalation to volunteer/org/admin | Role set server-side only; `enforce_profile_guard` trigger blocks self-escalation |
-| Adopter contact info (PII) | Unauthorised access | RLS restricts `adoptions` to admins/authorised carers |
+| Adopter contact info (PII) | Unauthorised access | RLS restricts `adoptions` to admins/authorised carers; never rendered back by the UI (see §4b) |
 | Uploaded photos | Embedded EXIF/GPS leaks location | MIME/size/magic-byte validation now; full EXIF stripping is **planned hardening** (see §4) |
 | User content | XSS via comments/notes | Stored + rendered as plain text; no `dangerouslySetInnerHTML` |
 | Service role key | Full DB access if leaked to client | `server-only` import guard; never referenced in client bundles |
 | Sensitive actions | Undetected abuse | Audit logging via DB triggers (insert-only, admin-read) |
 | Unauthenticated report spam | Abuse via anonymous submissions | Reporting requires authentication (see §6) |
 | Match suggestion tampering | A user linking a sighting to an unrelated/arbitrary cat, or forging a "confirmed" decision | Server-side re-validation (Zod) + RLS ownership checks on the sighting before any link/create action executes; decisions are always attributed to `auth.uid()` server-side, never client-supplied |
+| Unauthorised case claiming | A normal registered user claiming a case, or a volunteer stealing another volunteer's claim | `claim_case` RPC checks the caller's role server-side and rejects re-claiming by a different, non-admin/non-org volunteer (see §4b) |
+| Coordination write forgery | A user calling `add_case_update`/feeding/TNR/adoption RPCs directly for a case they have no access to | Every RPC independently checks `has_case_access`/`has_cat_access` or admin before writing anything (see §4b) |
 
 ## 2. Authentication
 
@@ -28,10 +30,9 @@ Postgres Row Level Security (RLS) as the authoritative boundary.
 ## 3. Authorization (RLS)
 
 RLS is enabled on **every** table (`supabase/migrations/0004_rls.sql`,
-extended by `0006_report_flow.sql`, `0007_matching.sql`, and
-`0008_matching_rpcs.sql`). Access is
-resolved through `SECURITY DEFINER` helper functions with a pinned
-`search_path`:
+extended by `0006_report_flow.sql`, `0007_matching.sql`, `0008_matching_rpcs.sql`,
+and `0009_coordination.sql`). Access is resolved through `SECURITY DEFINER`
+helper functions with a pinned `search_path`:
 
 - `current_user_role()`, `is_admin()`, `is_volunteer()`, `is_org()`
 - `has_case_access(case_id)` — admin, the claiming volunteer, or an org member
@@ -49,12 +50,24 @@ Highlights:
   yet; once linked, only admin/`has_cat_access` can update it further.
 - **cats** — any authenticated user may create one (their report, or the
   "create new profile" matching decision); updates require admin or
-  `has_cat_access`.
+  `has_cat_access` — direct client updates are therefore blocked for a
+  volunteer who hasn't claimed a case yet, which is exactly why claiming and
+  every coordination write run through RPCs rather than direct table access
+  (see §4b).
 - **cases** — a reporter may open the *initial* case for a cat they created;
-  otherwise admin/org/volunteer only. A volunteer can claim an unclaimed case;
-  org members manage their org's cases; admins manage all.
+  otherwise admin/org/volunteer only. Direct client `update` still requires
+  `claimed_by = auth.uid()`/org membership/admin — an unclaimed case's
+  `claimed_by` can only actually be set via the `claim_case` RPC, because a
+  not-yet-claiming volunteer fails that same check.
 - **case_events** — a reporter may append the initial event on a case they
   just opened; otherwise requires `has_case_access` or admin.
+- **feeding_schedules / feeding_logs / tnr_records** — direct client
+  read is open to any authenticated user (non-sensitive coordination data);
+  writes require `has_case_access` or admin, enforced identically inside the
+  RPCs.
+- **adoptions** — restricted to admins/authorised carers for both read and
+  write (minimises PII exposure — this is the one coordination table where
+  even *reading* is gated, because `adopter_contact` is PII).
 - **match_suggestions** — authenticated read/insert; direct client `update`
   is restricted to admin/`has_cat_access` (so a normal user cannot forge a
   decision by writing the row directly). The legitimate decision writes
@@ -62,10 +75,11 @@ Highlights:
   `link_sighting_to_cat` / `create_cat_from_sighting` SECURITY DEFINER RPCs
   (§4a), which set `confirmed_by = auth.uid()` server-side — the decision and
   its attribution can never be spoofed from the client.
-- **adoptions** — restricted to admins/authorised carers (minimises PII exposure).
 - **comments** — non-hidden visible to all; authors see their own; admins
-  moderate (hide) via update.
-- **follows/bookmarks/notifications** — strictly `user_id = auth.uid()`.
+  moderate (hide) via update. Comment writes are the one M4 feature that
+  remains a **direct table write** (no RPC) — see §4b for why that's safe.
+- **follows/bookmarks/notifications** — strictly `user_id = auth.uid()`; also
+  direct table writes for the same reason.
 - **moderation_flags** — authenticated users file reports; only admins read/resolve.
 - **audit_logs** — admin-read only; no client insert/update/delete policy, so
   rows are written exclusively by the `SECURITY DEFINER` audit trigger.
@@ -102,6 +116,47 @@ level, not just by RLS:
   linking — that the target cat was an actual suggested candidate, so the
   privileged path cannot be abused to link arbitrary cats or resolve someone
   else's sighting.
+
+## 4b. Coordination RPC security (M4)
+
+Claiming a case, posting a categorised case update, and managing feeding/TNR/
+adoption all require **role-based** authorization that goes beyond simple row
+ownership (e.g. "any volunteer, even one who has never touched this case, may
+claim it if it's unclaimed" — a check RLS's row-scoped `USING`/`WITH CHECK`
+clauses cannot express *before* the claim exists). Following the pattern
+established by the M3 audit, every M4 coordination write is a
+`SECURITY DEFINER` Postgres function (migration 0009) that performs its own
+explicit authorization check and all related writes atomically:
+
+- **`claim_case`** checks `current_user_role() in ('volunteer','org','admin')`
+  and rejects claiming a case already claimed by someone else unless the
+  caller is admin or shares the case's `org_id` — an explicit, auditable
+  override rather than a silent takeover.
+- **`add_case_update`, `create_feeding_schedule`, `add_feeding_log`,
+  `update_tnr_record`** all check `has_case_access(case_id) or is_admin()`.
+- **`update_adoption_record`** checks `has_cat_access(cat_id) or is_admin()`.
+- Every RPC is granted `EXECUTE` to `authenticated` only — never `anon` —
+  and `REVOKE ALL FROM PUBLIC` is applied first, so the grant is explicit
+  rather than inherited.
+- Status-transition safety is enforced *inside* the RPC, not the client:
+  `update_tnr_record` and `update_adoption_record` both read the cat's/case's
+  current status before writing and refuse to regress a resolved outcome
+  (`adopted`/`closed`).
+
+**Why comments/follows/bookmarks don't need an RPC:** their RLS policies
+already check `author_id`/`user_id = auth.uid()`, which every authenticated
+user satisfies for their own rows with no additional role logic — there is
+no "claim before you can act" gap for these three tables, so a direct,
+Zod-validated table write from the server action is both simpler and
+equally safe.
+
+**Adopter contact stays private end-to-end:** `AdoptionForm`
+(`src/components/adoption/AdoptionForm.tsx`) is a write-only form — it never
+fetches or displays a previously stored `adopter_contact` value, so even an
+authorised carer's browser never receives it back after submission unless
+they explicitly query the database directly (which itself remains
+RLS-gated to admin/`has_cat_access`). The public cat profile only ever reads
+`adoptions.status`, never `adopter_contact`.
 
 ## 4. Location privacy & EXIF
 
@@ -148,7 +203,7 @@ level, not just by RLS:
 ## 6. Data minimisation & scope decisions
 
 - Only necessary fields are collected; adopter contact is free-text, minimal,
-  and access-restricted (M4).
+  and access-restricted (implemented in M4 — see §4b).
 - The optional reporter "guest contact" field on the report form is free-text,
   optional, and only ever readable by authorised carers on that case (same RLS
   as the rest of `sightings`/case data) — never shown publicly.
@@ -160,7 +215,7 @@ level, not just by RLS:
   limiting in place yet, or (b) routing guest submissions through a
   service-role endpoint, which bypasses RLS entirely and needs its own abuse
   controls we have not built. Rather than ship either unsafely, guest
-  reporting is deferred to M4 alongside the abuse-mitigation work
+  reporting is deferred to M5 alongside the abuse-mitigation work
   (rate limiting, CAPTCHA) listed in §8.
 
 ## 7. Secrets hygiene
@@ -170,11 +225,11 @@ level, not just by RLS:
   (used by both `src/lib/supabase/admin.ts` and `src/lib/storage/catPhotos.ts`).
 - Next.js was pinned to a patched 14.2.x release to avoid a known advisory.
 
-## 8. Known gaps / planned (M4/M6)
+## 8. Known gaps / planned (M5/M6)
 
 - **EXIF/GPS metadata stripping** — see §4. Highest-priority gap.
 - Guest (unauthenticated) reporting — see §6.
-- Rate limiting on report/comment/matching-decision endpoints.
+- Rate limiting on report/comment/matching-decision/coordination endpoints.
 - CAPTCHA / abuse throttling for anonymous reporting (once guest reporting ships).
 - Automated RLS policy test suite (currently a manual per-role checklist —
   see `docs/testing.md`).
@@ -184,3 +239,10 @@ level, not just by RLS:
   milestone, it will need its own input validation (image size/type limits
   before sending to an external API) and error handling so a third-party
   outage never blocks the deterministic matching path.
+- **Admin moderation, organisation approval, and an audit-log viewer are M5.**
+  Comments can be flagged (`moderation_flags`) but there is no admin UI yet
+  to resolve flags or hide content — the underlying RLS and table support
+  already exist from M1.
+- **No case reassignment.** An org member can only see and self-claim
+  unclaimed cases from the case board; assigning a specific case to a
+  specific volunteer is not implemented.

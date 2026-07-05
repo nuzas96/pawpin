@@ -1,7 +1,7 @@
 -- ===========================================================================
 -- PawPin seed.sql — demo data for judges
 -- ===========================================================================
--- Run AFTER migrations 0001–0008, in the Supabase SQL Editor (runs as the
+-- Run AFTER migrations 0001–0009, in the Supabase SQL Editor (runs as the
 -- postgres superuser, which bypasses RLS — correct for seeding).
 --
 -- This seed creates four demo auth users with known passwords. If your
@@ -16,6 +16,16 @@
 -- lat 1.3521, lng 103.8198 to see a fresh possible-match review, or inspect
 -- the seeded pending suggestion directly via match_suggestions. Cats #2–#7
 -- have distinct coat colours/patterns/locations so they should NOT match #1.
+--
+-- Coordination demo (M4): case #1 (orange tabby) is CLAIMED by the demo
+-- volunteer, with an active feeding schedule + logs. Case #2 (calico) has an
+-- in-progress TNR record (neutered, ear-tipped, recovering). Case #5 (black
+-- kitten) is an UNCLAIMED critical-priority case — sign in as
+-- volunteer@pawpin.test and visit /dashboard/volunteer or /cases to claim it.
+-- Adoption pipeline: cat #3 is "available", cat #4 is "matched", cat #6 is
+-- "adopted" (closed lifecycle). Comments, follows, bookmarks, and
+-- notifications are seeded across several cats to exercise the community
+-- features and the notifications dropdown immediately.
 --
 -- Demo credentials (ALL demo-only — never use in production):
 --   user@pawpin.test       / PawPinDemo123
@@ -206,29 +216,38 @@ values
 -- ---------------------------------------------------------------------------
 -- 8) Feeding schedule + logs.
 -- ---------------------------------------------------------------------------
-insert into public.feeding_schedules (id, case_id, created_by, schedule_text, location_note, active)
+insert into public.feeding_schedules (id, case_id, created_by, schedule_text, location_note, frequency, next_feeding_at, active)
 values ('f0000000-0000-0000-0000-000000000001', 'e0000000-0000-0000-0000-000000000001',
-        '22222222-2222-2222-2222-222222222222', 'Daily at 7pm', 'Behind Block 123 void deck', true)
+        '22222222-2222-2222-2222-222222222222', 'Daily at 7pm', 'Behind Block 123 void deck',
+        'daily', (current_date + interval '1 day' + interval '19 hours'), true)
 on conflict (id) do nothing;
 
-insert into public.feeding_logs (case_id, schedule_id, fed_by, fed_at, notes)
+insert into public.feeding_logs (case_id, schedule_id, fed_by, fed_at, food_type, notes)
 values
-  ('e0000000-0000-0000-0000-000000000001', 'f0000000-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', now() - interval '2 days', 'Ate well, seemed alert.'),
-  ('e0000000-0000-0000-0000-000000000001', 'f0000000-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', now() - interval '1 days', 'Left a little food, watching the limp.');
+  ('e0000000-0000-0000-0000-000000000001', 'f0000000-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', now() - interval '2 days', 'Wet food', 'Ate well, seemed alert.'),
+  ('e0000000-0000-0000-0000-000000000001', 'f0000000-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', now() - interval '1 days', 'Dry kibble', 'Left a little food, watching the limp.');
 
 -- ---------------------------------------------------------------------------
--- 9) TNR record (audit trigger logs this).
+-- 9) TNR records (audit trigger logs these). Cat #2 is mid-workflow
+--    ("neutered", ear-tipped, recovering) — the clear "TNR in progress" demo.
 -- ---------------------------------------------------------------------------
-insert into public.tnr_records (case_id, tnr_status, clinic, trapped_at, neutered_at, notes)
+insert into public.tnr_records (case_id, tnr_status, clinic, scheduled_at, trapped_at, neutered_at, notes)
 values ('e0000000-0000-0000-0000-000000000002', 'neutered', 'Community Vet Clinic',
-        now() - interval '15 days', now() - interval '14 days', 'Recovering well; ear-tipped.');
+        now() - interval '16 days', now() - interval '15 days', now() - interval '14 days',
+        'Recovering well; ear-tipped.');
 
 -- ---------------------------------------------------------------------------
--- 10) Adoption record (audit trigger logs this; minimal PII).
+-- 10) Adoption records (audit trigger logs these; minimal PII).
+--     Three examples across the pipeline: available (tuxedo, cat #3),
+--     matched (grey, cat #4 — recovering, matched pending a home check), and
+--     adopted (brown tabby, cat #6 — closed lifecycle example).
 -- ---------------------------------------------------------------------------
 insert into public.adoptions (cat_id, adopter_contact, status, finalized_at, handled_by)
-values ('c0000000-0000-0000-0000-000000000006', 'adopter (contact on file)', 'finalized',
-        now() - interval '10 days', '33333333-3333-3333-3333-333333333333');
+values
+  ('c0000000-0000-0000-0000-000000000003', null, 'available', null, '22222222-2222-2222-2222-222222222222'),
+  ('c0000000-0000-0000-0000-000000000004', 'interested adopter (contact on file)', 'matched', null, '33333333-3333-3333-3333-333333333333'),
+  ('c0000000-0000-0000-0000-000000000006', 'adopter (contact on file)', 'adopted',
+   now() - interval '10 days', '33333333-3333-3333-3333-333333333333');
 
 -- ---------------------------------------------------------------------------
 -- 11) Comments (plain text).
@@ -237,26 +256,37 @@ insert into public.comments (cat_id, author_id, body)
 values
   ('c0000000-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'I see this orange cat near my block most evenings.'),
   ('c0000000-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222222', 'Thanks! I have started a feeding schedule and am watching the limp.'),
-  ('c0000000-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', 'Such a friendly tuxedo — hope it finds a home soon!');
+  ('c0000000-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', 'Such a friendly tuxedo — hope it finds a home soon!'),
+  ('c0000000-0000-0000-0000-000000000005', '11111111-1111-1111-1111-111111111111', 'Is anyone able to check on this kitten today? It looked very small and alone.');
 
 -- ---------------------------------------------------------------------------
 -- 12) Follows & bookmarks.
 -- ---------------------------------------------------------------------------
 insert into public.follows (user_id, cat_id)
-values ('11111111-1111-1111-1111-111111111111', 'c0000000-0000-0000-0000-000000000001')
+values
+  ('11111111-1111-1111-1111-111111111111', 'c0000000-0000-0000-0000-000000000001'),
+  ('11111111-1111-1111-1111-111111111111', 'c0000000-0000-0000-0000-000000000002'),
+  ('22222222-2222-2222-2222-222222222222', 'c0000000-0000-0000-0000-000000000004')
 on conflict do nothing;
 
 insert into public.bookmarks (user_id, cat_id)
-values ('11111111-1111-1111-1111-111111111111', 'c0000000-0000-0000-0000-000000000003')
+values
+  ('11111111-1111-1111-1111-111111111111', 'c0000000-0000-0000-0000-000000000003'),
+  ('11111111-1111-1111-1111-111111111111', 'c0000000-0000-0000-0000-000000000004')
 on conflict do nothing;
 
 -- ---------------------------------------------------------------------------
--- 13) Notifications.
+-- 13) Notifications — one per notification-trigger scenario described in
+--     the M4 spec (case claimed, case update, TNR update, adoption update).
 -- ---------------------------------------------------------------------------
 insert into public.notifications (user_id, type, payload)
 values
-  ('11111111-1111-1111-1111-111111111111', 'case_update',
-   '{"cat_id":"c0000000-0000-0000-0000-000000000001","message":"A volunteer claimed the orange tabby you follow."}'),
+  ('11111111-1111-1111-1111-111111111111', 'case_claimed',
+   '{"cat_id":"c0000000-0000-0000-0000-000000000001","message":"A volunteer claimed a case for a cat you follow."}'),
+  ('11111111-1111-1111-1111-111111111111', 'tnr_update',
+   '{"cat_id":"c0000000-0000-0000-0000-000000000002","tnr_status":"neutered","message":"TNR status updated for a cat you follow."}'),
+  ('22222222-2222-2222-2222-222222222222', 'adoption_update',
+   '{"cat_id":"c0000000-0000-0000-0000-000000000004","adoption_status":"matched","message":"Adoption status updated for a cat you follow."}'),
   ('22222222-2222-2222-2222-222222222222', 'new_sighting',
    '{"cat_id":"c0000000-0000-0000-0000-000000000001","message":"New sighting logged for a cat you are caring for."}');
 

@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth/guards";
 import { ROLE_LABELS } from "@/lib/auth/roles";
 import { ButtonLink } from "@/components/ui/Button";
 import { SignOutButton } from "@/components/layout/SignOutButton";
+import { NotificationsBell } from "@/components/layout/NotificationsBell";
 
 const PUBLIC_LINKS = [
   { href: "/map", label: "Live Map" },
@@ -48,6 +49,7 @@ export async function Navbar() {
         <div className="flex items-center gap-2">
           {user ? (
             <>
+              <NotificationsBell userId={user.id} />
               <Link
                 href="/profile"
                 className="hidden text-sm text-gray-600 hover:text-brand-700 sm:inline"

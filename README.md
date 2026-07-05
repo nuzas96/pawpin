@@ -8,13 +8,14 @@ coordinate feeding, TNR, medical care, and adoption — all on a privacy-first m
 
 > **Build status:** this repository currently implements **Milestone M0
 > (Foundation)**, **M1 (Data & Security Backbone)**, **M2 (Report Flow +
-> Storage + Live Map)**, and **M3 (Matching Engine + Persistent Cat
-> Profiles)**. Reporting a stray now runs a deterministic, explainable
-> matching engine against existing cat profiles and lets a human confirm
-> whether to link the sighting or start a new profile — PawPin's core
-> differentiator. Dashboards, feeding/TNR/adoption workflows, and
-> notifications land in later milestones. See "Milestone status" below and
-> `.kiro/specs/pawpin/spec.md`.
+> Storage + Live Map)**, **M3 (Matching Engine + Persistent Cat Profiles)**,
+> and **M4 (Volunteer Coordination, Feeding, TNR, Adoption, Community Case
+> Workflow)**. Volunteers and rescue organisations can now claim cases,
+> manage feeding schedules, track TNR progress, and move cats through
+> adoption stages; the community can comment, follow, and bookmark cat
+> profiles, with in-app notifications. Full admin moderation, organisation
+> approval, and final hardening land in later milestones. See "Milestone
+> status" below and `.kiro/specs/pawpin/spec.md`.
 
 ---
 
@@ -103,6 +104,7 @@ Find the Supabase values in **Dashboard → Project Settings → API**.
    - `supabase/migrations/0006_report_flow.sql`
    - `supabase/migrations/0007_matching.sql`
    - `supabase/migrations/0008_matching_rpcs.sql`
+   - `supabase/migrations/0009_coordination.sql`
 4. (Optional but recommended for the demo) run `supabase/seed.sql`.
 
 > Prefer the CLI? With the [Supabase CLI](https://supabase.com/docs/guides/cli)
@@ -179,6 +181,62 @@ immediately. With confirmation enabled, users must confirm via the emailed link
   fields (photo, status, approximate area label) are sent to the client.
 - See `docs/architecture.md` for the full weighting table and
   `src/lib/matching/` for the implementation.
+
+## How volunteer coordination works
+
+- Any **volunteer**, **rescue organisation**, or **admin** can claim an
+  unclaimed case from `/cases`, a cat's profile page, or their dashboard.
+  Registered users see a clear explanation that claiming requires volunteer
+  access rather than a broken or hidden button.
+- Claiming a case is atomic and double-claim-safe: it sets `claimed_by`,
+  promotes a `reported` case to `active`, appends a "Case claimed by
+  volunteer" timeline entry, and notifies the cat's followers — all inside a
+  single `SECURITY DEFINER` database function (`claim_case`), so the write
+  cannot partially succeed. A case already claimed by someone else is
+  rejected unless the caller is an admin or a member of the case's own
+  organisation (an explicit override, not a silent takeover).
+- Once claimed, the volunteer (or an org member/admin) can post categorised
+  case updates (progress, medical, feeding, TNR, adoption, general), manage
+  feeding schedules and logs, update TNR status, and update adoption status —
+  all from the cat's profile page.
+- `/dashboard/volunteer` shows a volunteer's claimed cases, open unclaimed
+  urgent cases nearby, today's feeding tasks, and in-progress TNR tasks.
+  `/dashboard/org` shows an organisation-wide view: active/claimed/unclaimed
+  case counts, unclaimed cases needing attention, and TNR/adoption pipeline
+  breakdowns.
+
+## How the feeding, TNR, and adoption workflows work
+
+- **Feeding**: a claimed case can have a feeding schedule (frequency —
+  once/daily/weekly/custom — plus a location note and next feeding time) and
+  a log of completed feedings (food type, notes). Every schedule/log write
+  appends a case timeline entry and is visible on the cat's profile.
+- **TNR**: tracks `not_started → trap_planned → trapped →
+  surgery_scheduled → neutered → ear_tipped → released`. Reaching `released`
+  promotes the cat's overall status to "released" **unless it has already
+  been adopted or closed** — the workflow never regresses a resolved outcome.
+- **Adoption**: tracks `not_available → intake → available →
+  application_received → matched → adopted`. Adopter contact information is
+  minimal, optional, and **never shown publicly** — it is only ever written
+  by an authorised carer and is restricted by Row Level Security to
+  admins/carers on that case; the public cat profile shows only the status.
+  Reaching `adopted` closes the case and promotes the cat's status.
+- All three workflows are enforced by dedicated Postgres functions
+  (`create_feeding_schedule`, `add_feeding_log`, `update_tnr_record`,
+  `update_adoption_record`) that check the caller has access to the case
+  before writing anything, so the authorization logic lives in one place.
+
+## How community engagement works
+
+- Any signed-in user can **comment** on a cat's profile (plain text only —
+  comments are rendered as text, never as HTML), **follow** a cat to get
+  notified about its updates, and **bookmark** a cat to find it again later.
+- Follow/bookmark state is shown directly on the profile page ("✓ Following",
+  "★ Bookmarked").
+- Notifications are simple and database-backed (no real-time infrastructure):
+  a bell icon in the navbar shows unread in-app notifications, generated when
+  a case a user follows is claimed, updated, changes status, or gets a new
+  linked sighting.
 
 ## How image upload works
 
@@ -263,10 +321,15 @@ for the security model.
   and `createCatProfileFromSighting` server actions, `match_suggestions`
   persistence with a human-confirmation trail, and an upgraded cat profile
   page (seen-count, first/last seen, linked sighting photos).
-- ⏭️ **M4** coordination workflows · **M5** dashboards + admin · **M6**
-  hardening · **M7** docs/demo polish.
+- ✅ **M4 Volunteer Coordination, Feeding, TNR, Adoption, Community Case
+  Workflow** — case claim flow (role-gated, double-claim-safe), categorised
+  case updates, feeding schedules/logs, full TNR tracking, adoption tracking
+  with restricted adopter contact, comments/follow/bookmark, database-backed
+  notifications with a navbar bell, real volunteer and organisation
+  dashboards, and an upgraded case board with claim buttons and status badges.
+- ⏭️ **M5** dashboards + admin · **M6** hardening · **M7** docs/demo polish.
 
-## Known limitations (M3)
+## Known limitations (M4)
 
 - **Reporting requires an account.** Guest (unauthenticated) reporting is not
   implemented yet — the current RLS insert policies require `authenticated`.
@@ -293,3 +356,17 @@ for the security model.
   dependency by design).
 - Volunteer/org/admin dashboards, feeding, TNR, adoption, comments, follows,
   bookmarks, and notifications remain placeholders until M4/M5.
+- **Admin dashboard remains a placeholder** — full moderation, organisation
+  approval, and an audit log viewer are M5.
+- **No case reassignment UI yet.** Org members see unclaimed cases and can
+  claim them, but assigning a *specific* case to a *specific* volunteer
+  (beyond self-claiming) is not yet implemented — noted directly on the org
+  dashboard.
+- **Notifications are pull-based, not real-time.** The navbar bell fetches on
+  page load and marks-all-read on open; there is no live/websocket push.
+- **`isAuthorisedCarer` on the cat profile page is a server-side
+  approximation** (claimed volunteer, org role with an org-linked case, or
+  admin) used only to decide whether to *render* management forms. The
+  actual authorization for every write is enforced independently by the
+  SECURITY DEFINER RPCs, so a mismatch here can only hide/show a form
+  incorrectly — it cannot bypass a write it shouldn't allow.
