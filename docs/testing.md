@@ -8,99 +8,106 @@ npm run typecheck   # TypeScript type checking (no emit)
 npm run build       # production build (also type-checks + lints)
 ```
 
-Current unit coverage (26 tests across 3 files):
+Current unit coverage (46 tests across 5 files):
 
-**`src/lib/validation/validation.test.ts` (16 tests)**
-- Image validation: valid JPEG accepted; unsupported MIME rejected; >8 MB
-  rejected; spoofed extension rejected.
-- Magic-byte detection: PNG and JPEG signatures detected; junk returns null.
-- Zod schemas: short passwords rejected; valid sign-up accepted; out-of-range
-  coordinates rejected; valid sighting accepted; comment requires a target;
-  invalid condition tag rejected; valid multi-tag condition list accepted;
-  optional guest contact accepted; missing latitude rejected.
+**`src/lib/matching/engine.test.ts` (11 tests)**
+- Identical traits at the same place/time score very high (≥95) with `high`
+  confidence.
+- Opposite traits, far away, long ago score below the match threshold with
+  `low` confidence.
+- A nearby sighting scores higher than a far sighting, all else equal.
+- A recent sighting scores higher than an old sighting, all else equal.
+- An `unknown` age group never scores worse than a fully-specified mismatch.
+- Empty distinguishing marks / condition tags on both sides are neutral, not
+  penalised.
+- A shared distinguishing mark increases the score versus no shared mark.
+- An ear-tip mismatch caps the score at 60 even when everything else matches,
+  and surfaces an explicit "Ear-tip status" reason.
+- `findPossibleMatches` filters below-threshold candidates, sorts descending,
+  caps results at 5, and every result carries the required disclaimer and a
+  non-empty reasons list.
 
-**`src/lib/geo/location.test.ts` (6 tests)**
-- Latitude/longitude range validation (valid and invalid boundary values).
-- `publicAreaLabel` produces the expected coarse label and never reveals more
-  than 2 decimal places of precision.
+**`src/lib/matching/wordingAndPrivacy.test.ts` (3 tests)**
+- Generated disclaimers/reasons never contain forbidden certainty phrases
+  ("same cat detected", "AI identified", "confirmed match", etc.).
+- The disclaimer is always the exact required string.
+- `PublicMatchCandidate`'s type has no `lat`/`lng`/`fuzzed_lat`/`fuzzed_lng`
+  keys — only a derived `areaLabel`.
 
-**`src/lib/map/publicMapPrivacy.test.ts` (4 tests)**
-- The `cats_map_public` and `sighting_geo_public` TypeScript row types expose
-  only `fuzzed_lat`/`fuzzed_lng` — never `lat`/`lng` keys.
-- Static assertions against the SQL migration source confirm both views
-  compute coordinates through `fuzz_coordinate(...)` and do not select raw
-  `lat`/`lng` as bare output columns.
+**`src/lib/validation/validation.test.ts` (22 tests)**
+- Image validation, magic-byte detection, sign-up/sighting/comment schemas
+  (as in M2), plus M3 additions: `linkSightingSchema` requires valid UUIDs for
+  both `sightingId` and `catId`; `createCatFromSightingSchema` requires a
+  valid `sightingId` and valid `traits` (rejecting an invalid coat colour).
 
-**Verified for this milestone:** `npm run build` succeeds (15 routes,
-including the new `/cats/[catId]` dynamic route), `npm run test` passes
-(26/26), `npm run lint` is clean, `npm run typecheck` is clean.
+**`src/lib/geo/location.test.ts` (6 tests)** and
+**`src/lib/map/publicMapPrivacy.test.ts` (4 tests)** — unchanged from M2 (see
+git history), still passing.
 
-## Manual QA checklist (M2 additions)
+**Verified for this milestone:** `npm run build` succeeds (15 routes),
+`npm run test` passes (46/46), `npm run lint` is clean, `npm run typecheck`
+is clean.
 
-### Report flow (`/report`)
-- [ ] Signed out: page shows a "sign in to report" notice with links, not a
-      broken or fake form.
-- [ ] Signed in: photo upload accepts jpg/png/webp, rejects other types and
-      files over 8 MB, and shows a live preview.
-- [ ] "Use my current location" populates lat/lng (browser permission prompt
-      appears); denying permission shows an inline error and the manual
-      fields remain usable.
-- [ ] Manual lat/lng entry rejects out-of-range values with a visible message.
-- [ ] Submitting without a location shows a clear validation error.
-- [ ] Submitting a complete report shows a loading state, then a success
-      screen containing the required text: "Matching review will be added in
-      the next milestone. For now, PawPin creates a new cat profile and
-      rescue case from this sighting."
-- [ ] Success screen links to the new cat profile and to the live map.
-- [ ] After submission, a new row exists in `cats`, `sightings`, `cases`, and
-      `case_events` (type `initial_sighting`).
+## Manual QA checklist (M3 additions)
 
-### Live map (`/map`)
-- [ ] Shows a loading state briefly, then either markers or an empty-state
-      message (never a blank white area).
-- [ ] Markers are coloured by urgency; clicking one opens a popup with coat/
-      pattern, status, urgency, last-seen, area label, marks, and a working
-      link to the cat profile.
-- [ ] Urgency / status / condition filters narrow the visible markers; clearing
-      filters restores them.
-- [ ] Temporarily breaking the Supabase URL/key in `.env.local` and reloading
-      shows the error state, not a crash.
-- [ ] Layout is usable on a narrow (mobile) viewport.
+### Matching review flow (`/report`)
+- [ ] Submitting a report near an existing seeded cat (e.g. the orange tabby
+      at lat 1.3521, lng 103.8198) shows the Matching Review modal with at
+      least one candidate, a similarity score, a confidence badge, and a
+      reasons list.
+- [ ] The modal shows the required disclaimer text: "PawPin suggests possible
+      matches using traits, time, and approximate location. A human must
+      confirm before sightings are linked."
+- [ ] Clicking "Link to this cat" shows a loading state, then redirects to a
+      success screen distinguishing "Sighting linked" from "New cat profile
+      created" — landing on the correct existing cat's profile.
+- [ ] Clicking "None of these — create a new cat profile" creates a new,
+      separate cat profile instead of linking.
+- [ ] Submitting a report with clearly different traits/location (e.g. the
+      seeded grey senior cat's area) shows "No likely match found" and offers
+      only the "create a new cat profile" action.
+- [ ] After linking, the target cat's profile shows an incremented "Seen N
+      times" count and a new case_events entry ("New sighting linked to this
+      cat profile").
+- [ ] After creating a new profile, a case_events entry reads "New cat
+      profile created from sighting".
 
-### Case board (`/cases`)
-- [ ] Lists cases with status + urgency badges; filters narrow the list.
-- [ ] "Claim case" button is visibly disabled and labelled "available in M4"
-      — not a functioning or misleading control.
-- [ ] Each case with a cat links to `/cats/[catId]`.
-
-### Cat profile (`/cats/[catId]`)
-- [ ] Shows the primary photo (or a placeholder if none), status/urgency/trait
-      badges, distinguishing marks, and the privacy note.
-- [ ] Sighting history lists entries with the **public area label**, never raw
-      coordinates.
-- [ ] Case timeline lists `case_events` in reverse-chronological order.
-- [ ] Visiting a non-existent cat id renders a 404, not a crash.
+### Cat profile upgrades (`/cats/[catId]`)
+- [ ] Stats bar shows "Seen N times", first seen, and last seen dates.
+- [ ] A gallery of photos linked from any sighting of this cat renders (if any
+      sightings had photos).
+- [ ] The persistent-profile explanation text is present.
+- [ ] Case timeline includes both `initial_sighting`/`new_profile_created` and
+      (after a link) `sighting_linked` events, newest first.
 
 ### RLS — verify per role (Supabase SQL editor "Run as" / app sessions)
-- [ ] **Guest/anon**: `select * from cats_map_public` and
-      `select * from sighting_geo_public` return fuzzed coords only;
-      `select lat, lng from sightings` returns **no rows**.
-- [ ] **Registered user**: can insert their own sighting/cat/case/case_event
-      (M2 report flow); cannot read another user's precise `sightings` row.
-- [ ] A non-admin `update profiles set role='admin'` is rejected by the guard.
+- [ ] A different authenticated user cannot call `linkSightingToCatProfile`
+      on someone else's still-pending sighting (RLS blocks the update because
+      `reporter_id <> auth.uid()`).
+- [ ] Once a sighting is linked (`cat_id` set), only admin/`has_cat_access`
+      can update it further — the original "pending, reporter-owned" update
+      path no longer applies.
+- [ ] `get_match_candidates(...)` is not callable by the `anon` role (only
+      `authenticated`).
+- [ ] Guest/anon `select * from cats_map_public` / `sighting_geo_public` still
+      return only fuzzed coordinates (unchanged from M2).
 
-### Location privacy
-- [ ] `fuzz_coordinate(1.3521)` differs from the raw value and is stable across
-      calls.
-- [ ] The public views never expose raw `lat`/`lng` column names (also covered
-      by the automated `publicMapPrivacy.test.ts`).
+### Wording contract
+- [ ] No screen in the matching review flow uses "identified", "confirmed
+      match", "same cat detected", or similar certainty language — verified
+      automatically by `wordingAndPrivacy.test.ts` and manually by reading the
+      UI copy in `MatchReviewModal.tsx` / `MatchCard.tsx`.
 
 ## How to run the seed and verify data
 
-1. Run migrations `0001`–`0006`, then `supabase/seed.sql`.
+1. Run migrations `0001`–`0008`, then `supabase/seed.sql`.
 2. Confirm: 4 profiles with distinct roles, 1 approved organisation, 7 cats
-   across statuses, 6 sightings (3 for the orange tabby), 7 cases, feeding
-   schedule + logs, a TNR record, an adoption, comments, a moderation flag,
-   notifications, seeded `match_suggestions`, and `audit_logs` rows.
-3. Sign in as `user@pawpin.test`, submit a new report via `/report`, and
-   confirm it appears immediately on `/map` and `/cases`.
+   across statuses, 7 sightings (4 for the orange tabby, one of which is
+   still **pending** with `cat_id IS NULL`), 7 cases, feeding schedule + logs,
+   a TNR record, an adoption, comments, a moderation flag, notifications, a
+   **linked** `match_suggestions` row and a **pending** one (for the
+   unresolved sighting), and `audit_logs` rows.
+3. Sign in as `user@pawpin.test`. Visit `/cats/c0000000-0000-0000-0000-000000000001`
+   (the orange tabby) to see the stats bar and history. Then submit a new
+   report near the same location to see a live Matching Review with that cat
+   as a likely candidate.

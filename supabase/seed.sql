@@ -1,13 +1,21 @@
 -- ===========================================================================
 -- PawPin seed.sql — demo data for judges
 -- ===========================================================================
--- Run AFTER migrations 0001–0005, in the Supabase SQL Editor (runs as the
+-- Run AFTER migrations 0001–0008, in the Supabase SQL Editor (runs as the
 -- postgres superuser, which bypasses RLS — correct for seeding).
 --
 -- This seed creates four demo auth users with known passwords. If your
 -- Supabase project disallows direct auth.users inserts, see README.md for the
 -- manual "create accounts in the dashboard, then run the profile section"
 -- fallback.
+--
+-- Matching demo (M3): cat #1 (orange tabby) has three prior sightings close
+-- together in time/place, PLUS a fourth, still-PENDING sighting with a
+-- pre-computed "pending" match_suggestions row — open /report as
+-- user@pawpin.test and submit an orange tabby sighting near
+-- lat 1.3521, lng 103.8198 to see a fresh possible-match review, or inspect
+-- the seeded pending suggestion directly via match_suggestions. Cats #2–#7
+-- have distinct coat colours/patterns/locations so they should NOT match #1.
 --
 -- Demo credentials (ALL demo-only — never use in production):
 --   user@pawpin.test       / PawPinDemo123
@@ -261,9 +269,10 @@ values ('comment', (select id from public.comments limit 1), 'spam',
 
 -- ---------------------------------------------------------------------------
 -- 15) Pre-computed match suggestions (orange tabby) so the matching screen
---     has content even before a judge submits a new report.
+--     has content even before a judge submits a new report. This one is
+--     already resolved ("linked") to show a completed decision.
 -- ---------------------------------------------------------------------------
-insert into public.match_suggestions (sighting_id, candidate_cat_id, score, reasons, decision)
+insert into public.match_suggestions (sighting_id, candidate_cat_id, score, reasons, decision, confirmed_by, confirmed_at)
 values
   ('d0000000-0000-0000-0000-000000000003', 'c0000000-0000-0000-0000-000000000001', 88,
    '[{"signal":"Coat colour","contribution":22,"detail":"Both reported as orange"},
@@ -271,7 +280,32 @@ values
      {"signal":"Distinguishing marks","contribution":18,"detail":"Shared: notched right ear"},
      {"signal":"Distance","contribution":14,"detail":"~40m from prior sighting"},
      {"signal":"Recency","contribution":6,"detail":"Seen within the last 2 weeks"}]'::jsonb,
-   'confirmed_link');
+   'linked', '11111111-1111-1111-1111-111111111111', now() - interval '2 days');
+
+-- ---------------------------------------------------------------------------
+-- 15b) A fresh PENDING sighting of the orange tabby, left unlinked
+--      (cat_id IS NULL) with a PENDING match suggestion — this is exactly the
+--      state a judge would see immediately after submitting a new report
+--      that resembles cat #1. Demonstrates the matching review UI without
+--      requiring a live report submission first.
+-- ---------------------------------------------------------------------------
+insert into public.sightings (id, cat_id, reporter_id, photo_id, lat, lng, urgency, condition_tags, notes, created_at)
+values
+  ('d0000000-0000-0000-0000-000000000007', null, '11111111-1111-1111-1111-111111111111', null,
+   1.352050, 103.819750, 'medium', array['friendly'],
+   'Possibly the same orange tabby again, near the usual spot.', now() - interval '2 hours')
+on conflict (id) do nothing;
+
+insert into public.match_suggestions (sighting_id, candidate_cat_id, score, reasons, decision)
+values
+  ('d0000000-0000-0000-0000-000000000007', 'c0000000-0000-0000-0000-000000000001', 91,
+   '[{"signal":"Coat colour","contribution":22,"detail":"Both reported as orange"},
+     {"signal":"Fur pattern","contribution":15,"detail":"Both tabby"},
+     {"signal":"Distinguishing marks","contribution":18,"detail":"Shared: white chest patch, notched right ear"},
+     {"signal":"Distance","contribution":15,"detail":"~15m from prior sighting"},
+     {"signal":"Recency","contribution":6,"detail":"Seen earlier today"}]'::jsonb,
+   'pending')
+on conflict do nothing;
 
 -- ---------------------------------------------------------------------------
 -- 16) Explicit audit log example (in addition to trigger-generated rows).

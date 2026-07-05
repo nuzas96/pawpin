@@ -58,14 +58,29 @@ See `supabase/migrations/` for the authoritative schema.
 - Plain-text user content; audit logs insert-only + admin-read.
 - No unnecessary PII; service-role key server-only; no committed secrets.
 
-## 7. Matching engine (M3)
+## 7. Matching engine (M3, implemented)
 
-Weighted, deterministic comparison of coat colour, fur pattern, size, age group,
-distinguishing marks, distance, recency, and condition tags. Returns a
-similarity score /100, top matches, and per-signal reasons. Safe wording:
-"possible match", "similarity score", "human confirmation required". Optional AI
-enhancer only when `GEMINI_API_KEY` is present; the app is fully functional
+Weighted, deterministic comparison of coat colour (22), fur pattern (15),
+distinguishing marks (18), distance (15), size class (12), age group (8),
+recency (6), and condition tags (4) — total 100. Distance uses haversine with
+exponential decay (not a hard radius); recency uses exponential decay.
+Unknown/missing fields are excluded from scoring entirely rather than
+penalising the candidate. An ear-tipped mismatch caps the score at 60.
+
+Returns the top 5 candidates scoring ≥45/100, each with a similarity score,
+a conservative confidence band (low/medium/high), and per-signal reasons.
+Safe wording only: "possible match", "similarity score", "human confirmation
+required", "assisted matching" — never "same cat detected" or "AI identified
+the cat" (enforced by an automated wording test). Optional AI enhancer
+(`src/lib/matching/ai-adapter.ts`) activates only when `GEMINI_API_KEY` is
+present, and is a strict no-op in this milestone; the app is fully functional
 without it.
+
+Sightings are created **pending** (`cat_id = NULL`); the reporter's decision
+via the Matching Review UI — link to an existing cat or create a new profile
+— is what actually assigns `cat_id`, preventing duplicate cat profiles from
+being created before a human confirms. See `docs/architecture.md` §6 for the
+full design and `src/lib/matching/` for the implementation.
 
 ## 8. Pages
 
@@ -89,8 +104,20 @@ About/Impact.
   `sighting_geo_public` views, with urgency/status/condition filters and
   loading/empty/error states; read-only case board with disabled claim
   buttons; basic cat profile page with sighting history and case timeline.
-- **M3** matching engine + profiles · **M4** coordination workflows · **M5**
-  dashboards + admin · **M6** hardening · **M7** docs/demo polish.
+- **M3 Matching Engine + Persistent Cat Profiles** *(implemented)* —
+  deterministic heuristic matching engine (`src/lib/matching/`) with unit
+  tests covering scoring behaviour and the wording/privacy contract;
+  server-side candidate search (`get_match_candidates` RPC + haversine
+  scoring) that never leaks precise coordinates to the client; the report
+  flow now creates a **pending** sighting and shows a Matching Review UI
+  (`MatchReviewModal`, `MatchCard`, `ScoreBadge`) with public-safe candidate
+  data; `linkSightingToCatProfile` and `createCatProfileFromSighting` server
+  actions resolve the pending sighting and persist the human's decision to
+  `match_suggestions` (`pending` → `linked`/`rejected`/`new_profile_created`);
+  the cat profile page is upgraded with a "seen N times"/first-seen/last-seen
+  stats bar, a linked-photo gallery, and a persistent-profile explanation.
+- **M4** coordination workflows · **M5** dashboards + admin · **M6**
+  hardening · **M7** docs/demo polish.
 
 ## 10. Acceptance criteria
 
@@ -120,3 +147,26 @@ About/Impact.
 - Documentation explains the report flow, image upload, location privacy, and
   what remains for M3.
 - `npm run build`, `lint`, `typecheck`, and `test` all pass.
+
+**M3**
+- Submitting a report creates a **pending** sighting (`cat_id = NULL`), not an
+  immediate new cat profile.
+- The matching engine runs server-side and returns candidates scoring
+  ≥45/100, each with a score, confidence band, and reasons; results sent to
+  the client never include raw `lat`/`lng` (enforced by a typed projection and
+  an automated test).
+- The Matching Review UI shows the required disclaimer text verbatim and
+  offers both "link to this cat" and "create a new profile" paths.
+- Linking a sighting updates `cat_id`, bumps `last_seen_at` when appropriate,
+  opens/reuses a case, appends a `case_events` row, and updates
+  `match_suggestions.decision` to `linked` (chosen) / `rejected` (others).
+- Creating a new profile from a pending sighting creates a new `cats` row,
+  links the sighting, opens a case, appends a `case_events` row, and marks any
+  pending `match_suggestions` as `rejected`.
+- Neither decision action trusts client-supplied ownership — both re-validate
+  with Zod and rely on RLS to confirm the caller may act on the sighting.
+- The cat profile page shows a "seen N times" count, first/last seen dates,
+  and a persistent-profile explanation.
+- No UI or generated text uses forbidden certainty language ("same cat
+  detected", "AI identified the cat", etc.) — covered by an automated test.
+- `npm run build`, `lint`, `typecheck`, and `test` all pass (46/46 tests).

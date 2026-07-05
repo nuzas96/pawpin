@@ -4,7 +4,7 @@ import {
   detectImageType,
   MAX_IMAGE_BYTES,
 } from "@/lib/validation/image";
-import { signUpSchema, sightingSchema, commentSchema } from "@/lib/validation/schemas";
+import { signUpSchema, sightingSchema, commentSchema, linkSightingSchema, createCatFromSightingSchema } from "@/lib/validation/schemas";
 
 describe("validateImageFile", () => {
   it("accepts a valid jpeg under the size limit", () => {
@@ -131,6 +131,50 @@ describe("sightingSchema", () => {
 describe("commentSchema", () => {
   it("requires a cat or case target", () => {
     const result = commentSchema.safeParse({ body: "hi" });
+    expect(result.success).toBe(false);
+  });
+});
+
+
+describe("linkSightingSchema", () => {
+  it("requires both sightingId and catId as valid UUIDs", () => {
+    const result = linkSightingSchema.safeParse({ sightingId: "not-a-uuid", catId: "also-not-a-uuid" });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a valid payload", () => {
+    const result = linkSightingSchema.safeParse({
+      sightingId: "11111111-1111-1111-1111-111111111111",
+      catId: "22222222-2222-2222-2222-222222222222",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a missing catId", () => {
+    const result = linkSightingSchema.safeParse({ sightingId: "11111111-1111-1111-1111-111111111111" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("createCatFromSightingSchema", () => {
+  it("requires a valid sightingId and traits", () => {
+    const result = createCatFromSightingSchema.safeParse({ sightingId: "not-a-uuid" });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a valid payload with default traits", () => {
+    const result = createCatFromSightingSchema.safeParse({
+      sightingId: "11111111-1111-1111-1111-111111111111",
+      traits: { coatColor: "orange", furPattern: "tabby", sizeClass: "medium" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an invalid coat colour in traits", () => {
+    const result = createCatFromSightingSchema.safeParse({
+      sightingId: "11111111-1111-1111-1111-111111111111",
+      traits: { coatColor: "rainbow", furPattern: "tabby", sizeClass: "medium" },
+    });
     expect(result.success).toBe(false);
   });
 });

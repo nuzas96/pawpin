@@ -8,10 +8,12 @@ import {
   type CatTraitsInput,
   type ConditionTag,
 } from "@/lib/validation/schemas";
+import type { PublicMatchCandidate } from "@/lib/matching/types";
 import { PhotoUpload } from "@/components/report/PhotoUpload";
 import { LocationCapture } from "@/components/report/LocationCapture";
 import { TraitPicker } from "@/components/report/TraitPicker";
 import { UrgencyPicker, ConditionTagPicker } from "@/components/report/UrgencyAndConditionPicker";
+import { MatchReviewModal } from "@/components/matching/MatchReviewModal";
 import { Button } from "@/components/ui/Button";
 import { Card, Label, Textarea, Input } from "@/components/ui";
 
@@ -24,7 +26,7 @@ const DEFAULT_TRAITS: CatTraitsInput = {
   distinguishingMarks: [],
 };
 
-type FormState = "idle" | "submitting" | "success" | "error";
+type FormState = "idle" | "submitting" | "matching" | "success" | "error";
 
 export function ReportForm({ isAuthenticated }: { isAuthenticated: boolean }) {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -38,7 +40,26 @@ export function ReportForm({ isAuthenticated }: { isAuthenticated: boolean }) {
 
   const [state, setState] = useState<FormState>("idle");
   const [errors, setErrors] = useState<string[]>([]);
-  const [result, setResult] = useState<{ catId: string; areaLabel: string } | null>(null);
+  const [pendingSightingId, setPendingSightingId] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<PublicMatchCandidate[]>([]);
+  const [areaLabel, setAreaLabel] = useState<string>("");
+  const [result, setResult] = useState<{ catId: string; wasLinked: boolean; areaLabel: string } | null>(null);
+
+  function resetForm() {
+    setState("idle");
+    setResult(null);
+    setPendingSightingId(null);
+    setCandidates([]);
+    setAreaLabel("");
+    setPhotoFile(null);
+    setLat(null);
+    setLng(null);
+    setTraits(DEFAULT_TRAITS);
+    setUrgency("medium");
+    setConditionTags([]);
+    setNotes("");
+    setGuestContact("");
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -90,8 +111,12 @@ export function ReportForm({ isAuthenticated }: { isAuthenticated: boolean }) {
         return;
       }
 
-      setResult({ catId: response.catId, areaLabel: response.areaLabel });
-      setState("success");
+      // Sighting is now "pending" — always show the match review step
+      // (with zero candidates it offers only "create a new cat profile").
+      setPendingSightingId(response.sightingId);
+      setCandidates(response.candidates);
+      setAreaLabel(response.areaLabel);
+      setState("matching");
     } catch (err) {
       setState("error");
       setErrors([err instanceof Error ? err.message : "Something went wrong. Please try again."]);
@@ -123,10 +148,13 @@ export function ReportForm({ isAuthenticated }: { isAuthenticated: boolean }) {
   if (state === "success" && result) {
     return (
       <Card className="max-w-xl">
-        <h2 className="text-lg font-semibold text-green-700">Report submitted 🎉</h2>
+        <h2 className="text-lg font-semibold text-green-700">
+          {result.wasLinked ? "Sighting linked 🎉" : "New cat profile created 🎉"}
+        </h2>
         <p className="mt-2 text-sm text-gray-700">
-          Matching review will be added in the next milestone. For now, PawPin
-          creates a new cat profile and rescue case from this sighting.
+          {result.wasLinked
+            ? "Thanks for confirming — this sighting is now part of that cat's persistent profile and case history."
+            : "PawPin created a new cat profile and rescue case from this sighting."}
         </p>
         <p className="mt-2 text-sm text-gray-600">
           Public area: <span className="font-medium">{result.areaLabel}</span>
@@ -138,22 +166,7 @@ export function ReportForm({ isAuthenticated }: { isAuthenticated: boolean }) {
           <Link href="/map">
             <Button type="button" variant="secondary">View on map</Button>
           </Link>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => {
-              setState("idle");
-              setResult(null);
-              setPhotoFile(null);
-              setLat(null);
-              setLng(null);
-              setTraits(DEFAULT_TRAITS);
-              setUrgency("medium");
-              setConditionTags([]);
-              setNotes("");
-              setGuestContact("");
-            }}
-          >
+          <Button type="button" variant="ghost" onClick={resetForm}>
             Report another cat
           </Button>
         </div>
@@ -162,77 +175,91 @@ export function ReportForm({ isAuthenticated }: { isAuthenticated: boolean }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="max-w-xl space-y-6" noValidate>
-      <Card>
-        <h2 className="mb-3 font-semibold text-brand-800">1. Photo</h2>
-        <PhotoUpload onFileSelected={setPhotoFile} />
-      </Card>
+    <>
+      <form onSubmit={handleSubmit} className="max-w-xl space-y-6" noValidate>
+        <Card>
+          <h2 className="mb-3 font-semibold text-brand-800">1. Photo</h2>
+          <PhotoUpload onFileSelected={setPhotoFile} />
+        </Card>
 
-      <Card>
-        <h2 className="mb-3 font-semibold text-brand-800">2. Location</h2>
-        <LocationCapture lat={lat} lng={lng} onChange={(newLat, newLng) => { setLat(newLat); setLng(newLng); }} />
-      </Card>
+        <Card>
+          <h2 className="mb-3 font-semibold text-brand-800">2. Location</h2>
+          <LocationCapture lat={lat} lng={lng} onChange={(newLat, newLng) => { setLat(newLat); setLng(newLng); }} />
+        </Card>
 
-      <Card>
-        <h2 className="mb-3 font-semibold text-brand-800">3. Urgency &amp; condition</h2>
-        <div className="space-y-4">
-          <div>
-            <Label htmlFor="urgency">Urgency</Label>
-            <UrgencyPicker value={urgency} onChange={setUrgency} />
+        <Card>
+          <h2 className="mb-3 font-semibold text-brand-800">3. Urgency &amp; condition</h2>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="urgency">Urgency</Label>
+              <UrgencyPicker value={urgency} onChange={setUrgency} />
+            </div>
+            <div>
+              <Label htmlFor="conditionTags">Condition tags</Label>
+              <ConditionTagPicker value={conditionTags} onChange={setConditionTags} />
+            </div>
           </div>
-          <div>
-            <Label htmlFor="conditionTags">Condition tags</Label>
-            <ConditionTagPicker value={conditionTags} onChange={setConditionTags} />
-          </div>
-        </div>
-      </Card>
+        </Card>
 
-      <Card>
-        <h2 className="mb-3 font-semibold text-brand-800">4. Cat traits</h2>
-        <TraitPicker traits={traits} onChange={setTraits} />
-      </Card>
+        <Card>
+          <h2 className="mb-3 font-semibold text-brand-800">4. Cat traits</h2>
+          <TraitPicker traits={traits} onChange={setTraits} />
+        </Card>
 
-      <Card>
-        <h2 className="mb-3 font-semibold text-brand-800">5. Notes</h2>
-        <Label htmlFor="notes">Additional notes (optional)</Label>
-        <Textarea
-          id="notes"
-          rows={3}
-          maxLength={1000}
-          placeholder="Anything else that might help — behaviour, exact spot, time of day…"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
-
-        <div className="mt-4">
-          <Label htmlFor="guestContact">Optional contact (only shown to carers on this case)</Label>
-          <Input
-            id="guestContact"
-            type="text"
-            placeholder="Phone or messaging handle (optional)"
-            value={guestContact}
-            onChange={(e) => setGuestContact(e.target.value)}
+        <Card>
+          <h2 className="mb-3 font-semibold text-brand-800">5. Notes</h2>
+          <Label htmlFor="notes">Additional notes (optional)</Label>
+          <Textarea
+            id="notes"
+            rows={3}
+            maxLength={1000}
+            placeholder="Anything else that might help — behaviour, exact spot, time of day…"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
           />
-          <p className="mt-1 text-xs text-gray-400">
-            Only volunteers/rescues who take on this case can see this. Leave
-            blank if you prefer not to share contact details.
-          </p>
-        </div>
-      </Card>
 
-      {errors.length > 0 && (
-        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          <ul className="list-inside list-disc space-y-1">
-            {errors.map((err) => (
-              <li key={err}>{err}</li>
-            ))}
-          </ul>
-        </div>
+          <div className="mt-4">
+            <Label htmlFor="guestContact">Optional contact (only shown to carers on this case)</Label>
+            <Input
+              id="guestContact"
+              type="text"
+              placeholder="Phone or messaging handle (optional)"
+              value={guestContact}
+              onChange={(e) => setGuestContact(e.target.value)}
+            />
+            <p className="mt-1 text-xs text-gray-400">
+              Only volunteers/rescues who take on this case can see this. Leave
+              blank if you prefer not to share contact details.
+            </p>
+          </div>
+        </Card>
+
+        {errors.length > 0 && (
+          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <ul className="list-inside list-disc space-y-1">
+              {errors.map((err) => (
+                <li key={err}>{err}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <Button type="submit" disabled={state === "submitting"} className="w-full">
+          {state === "submitting" ? "Submitting report…" : "Submit report"}
+        </Button>
+      </form>
+
+      {state === "matching" && pendingSightingId && (
+        <MatchReviewModal
+          sightingId={pendingSightingId}
+          candidates={candidates}
+          traits={traits}
+          onResolved={({ catId, wasLinked }) => {
+            setResult({ catId, wasLinked, areaLabel });
+            setState("success");
+          }}
+        />
       )}
-
-      <Button type="submit" disabled={state === "submitting"} className="w-full">
-        {state === "submitting" ? "Submitting report…" : "Submit report"}
-      </Button>
-    </form>
+    </>
   );
 }

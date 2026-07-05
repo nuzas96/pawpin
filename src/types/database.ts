@@ -8,6 +8,7 @@
  */
 
 export type UserRole = "user" | "volunteer" | "org" | "admin";
+export type MatchDecision = "pending" | "linked" | "rejected" | "new_profile_created";
 export type CaseStatus =
   | "reported"
   | "under_review"
@@ -420,9 +421,10 @@ export interface Database {
           sighting_id: string;
           candidate_cat_id: string;
           score: number;
-          reasons: Record<string, unknown>;
+          reasons: Record<string, unknown> | unknown[];
           confirmed_by: string | null;
-          decision: string | null;
+          decision: MatchDecision | null;
+          confirmed_at: string | null;
           created_at: string;
         };
         Insert: {
@@ -430,9 +432,10 @@ export interface Database {
           sighting_id: string;
           candidate_cat_id: string;
           score: number;
-          reasons?: Record<string, unknown>;
+          reasons?: Record<string, unknown> | unknown[];
           confirmed_by?: string | null;
-          decision?: string | null;
+          decision?: MatchDecision | null;
+          confirmed_at?: string | null;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["match_suggestions"]["Insert"]>;
@@ -481,6 +484,47 @@ export interface Database {
       has_case_access: { Args: { case_id: string }; Returns: boolean };
       has_cat_access: { Args: { target_cat_id: string }; Returns: boolean };
       fuzz_coordinate: { Args: { value: number }; Returns: number };
+      get_match_candidates: {
+        Args: {
+          query_lat: number;
+          query_lng: number;
+          max_distance_meters?: number;
+          max_age_days?: number;
+        };
+        Returns: {
+          cat_id: string;
+          coat_color: CoatColor;
+          fur_pattern: FurPattern;
+          size_class: SizeClass;
+          age_group: AgeGroup;
+          distinguishing_marks: string[];
+          ear_tipped: boolean;
+          primary_photo_id: string | null;
+          status: CaseStatus;
+          last_seen_at: string;
+          sighting_lat: number;
+          sighting_lng: number;
+          sighting_occurred_at: string;
+          sighting_condition_tags: string[];
+          sighting_urgency: UrgencyLevel;
+        }[];
+      };
+      link_sighting_to_cat: {
+        Args: { p_sighting_id: string; p_cat_id: string };
+        Returns: { result_cat_id: string; result_case_id: string }[];
+      };
+      create_cat_from_sighting: {
+        Args: {
+          p_sighting_id: string;
+          p_coat_color: CoatColor;
+          p_fur_pattern: FurPattern;
+          p_size_class: SizeClass;
+          p_age_group: AgeGroup;
+          p_ear_tipped: boolean;
+          p_marks: string[];
+        };
+        Returns: { result_cat_id: string; result_case_id: string }[];
+      };
     };
     Enums: {
       user_role: UserRole;

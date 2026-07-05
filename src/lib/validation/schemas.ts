@@ -103,6 +103,21 @@ export const reportFormSchema = sightingSchema;
 export type ReportFormInput = z.infer<typeof reportFormSchema>;
 
 // ---------------------------------------------------------------------------
+// Matching review decisions (M3)
+// ---------------------------------------------------------------------------
+export const linkSightingSchema = z.object({
+  sightingId: z.string().uuid(),
+  catId: z.string().uuid(),
+});
+export type LinkSightingInput = z.infer<typeof linkSightingSchema>;
+
+export const createCatFromSightingSchema = z.object({
+  sightingId: z.string().uuid(),
+  traits: catTraitsSchema,
+});
+export type CreateCatFromSightingInput = z.infer<typeof createCatFromSightingSchema>;
+
+// ---------------------------------------------------------------------------
 // Comment (plain text only — never rendered as HTML)
 // ---------------------------------------------------------------------------
 export const commentSchema = z.object({
