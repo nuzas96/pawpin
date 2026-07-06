@@ -3,11 +3,11 @@
 PawPin ensures robust reliability using **Vitest** for automated unit and integration tests. The test suite thoroughly verifies core business logic, matching engines, and crucial privacy guards.
 
 ## Test Suite Status
-✅ **116 Tests Passing** across 9 test suites.
+✅ **123 Tests Passing** across 10 test suites.
 
 ## Areas Tested
 1. **Validation & Image Metadata** (`src/lib/validation/*`)
-   Ensures uploaded files meet size limits and valid file extensions, catching bad user input early.
+   Ensures uploaded files meet size limits and valid file extensions, catching bad user input early. Includes strict metadata stripping tests (fail-closed) and WEBP rejection.
 2. **Location Privacy** (`src/lib/map/publicMapPrivacy.test.ts` and `src/lib/geo/location.test.ts`)
    Vigorously tests that fuzzy truncation accurately outputs 2-decimal-place coordinates regardless of bounding box logic, confirming location privacy.
 3. **Role Gating** (`src/lib/auth/roleGating.test.ts`)
@@ -16,8 +16,10 @@ PawPin ensures robust reliability using **Vitest** for automated unit and integr
    Tests our in-memory rate limiting implementation to ensure API endpoints don't get DDoSed or spammed.
 5. **Matching Engine** (`src/lib/matching/engine.test.ts` and `wordingAndPrivacy.test.ts`)
    Tests the mathematical matching logic that calculates confidence scores based on distance, time discrepancy, and matching visual traits.
-6. **AI Vision Suggestions** (`src/lib/ai/vision.test.ts`)
-   Verifies the prompt generation for Gemini Vision properly isolates colors and patterns.
+6. **AI Vision Suggestions** (`src/lib/ai/vision.test.ts`, `src/actions/aiVision.test.ts`)
+   Verifies the prompt generation for Gemini Vision properly isolates colors and patterns, and confirms images are sanitized before being sent.
+7. **Authentication & Redirects** (`src/lib/auth/redirect.test.ts`)
+   Tests the `getSafeRedirectPath` helper to prevent Open Redirect vulnerabilities.
 
 ## Running Tests Locally
 To run the full test suite locally:

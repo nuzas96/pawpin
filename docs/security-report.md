@@ -29,5 +29,22 @@ PawPin uses a 3-tier role system:
 - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are the only exposed environment variables, which is safe due to Supabase RLS.
 - Sensitive keys like `GEMINI_API_KEY` are heavily guarded, accessed only securely on the server environment.
 
+## Image Metadata Sanitization
+When a user uploads a photo from their phone, it often contains hidden EXIF/GPS metadata which could inadvertently expose the precise location of the cat, circumventing our fuzzy location privacy model. 
+PawPin fixes this by:
+- Employing a strict, fail-closed metadata stripper server-side for JPG and PNG files.
+- Rejecting WEBP formats since their metadata cannot be safely stripped without heavy native dependencies.
+- Any image that is malformed or cannot have its metadata cleanly stripped is rejected with a user-friendly error.
+
+## AI Vision Sent-Data Security
+PawPin uses Gemini Vision API, but does so with privacy in mind:
+- Only the sanitized image bytes (metadata stripped) are sent to the LLM. 
+- No user identity, reporter contact, precise location, or fuzzy coordinates are ever included in the prompt.
+- The original unstripped image is never forwarded. 
+
+## Authentication & Routing Security
+- The system employs a secure redirect helper that strictly validates incoming URL paths (like `?next=` or `?redirectTo=`) to prevent **Open Redirect** vulnerabilities. It rejects external links, protocol-relative links, and encoded strings.
+- Only relative paths starting with exactly one slash (e.g., `/profile`) are allowed.
+
 ## Audit Logs
 Admin dashboards have visibility into user creations and critical system flags to monitor for abuse.

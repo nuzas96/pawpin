@@ -16,7 +16,6 @@ export const CAT_PHOTOS_BUCKET = "cat-photos";
 const EXT_BY_MIME: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
-  "image/webp": "webp",
 };
 
 export type PhotoUploadResult =
@@ -32,8 +31,7 @@ export type PhotoUploadResult =
  * - Rejects a spoofed MIME whose actual bytes are not an allowed image type.
  * - Strips embedded metadata (EXIF/GPS/XMP for JPEG, textual chunks for PNG)
  *   via `stripImageMetadata` before upload, so a phone photo's embedded GPS
- *   cannot bypass the map's coordinate-fuzzing privacy layer. WEBP metadata
- *   stripping is partial (documented gap).
+ *   cannot bypass the map's coordinate-fuzzing privacy layer. 
  * - Generates a random UUID-based storage path; the original filename is
  *   discarded (never trusted as a path component).
  * - Uploads under `<uploaderId>/<uuid>.<ext>` so Storage RLS (owner-scoped
@@ -57,7 +55,7 @@ export async function uploadCatPhoto(
   if (!detectedMime || !(ALLOWED_IMAGE_MIME as readonly string[]).includes(detectedMime)) {
     return {
       ok: false,
-      error: "This file doesn't look like a valid JPG, PNG, or WEBP image. Please choose a different photo.",
+      error: "This file doesn't look like a valid JPG or PNG image. Please choose a different photo.",
     };
   }
   // Defence-in-depth: reject a declared MIME that disagrees with the actual
@@ -74,6 +72,12 @@ export async function uploadCatPhoto(
 
   // Strip embedded metadata (EXIF/GPS/XMP) before the bytes ever leave the server.
   const cleanBytes = stripImageMetadata(bytes, detectedMime);
+  if (!cleanBytes) {
+    return {
+      ok: false,
+      error: "Could not safely process the image metadata. The file may be malformed or unsupported.",
+    };
+  }
 
   const ext = EXT_BY_MIME[detectedMime] ?? "jpg";
   const storagePath = `${uploaderId}/${randomUUID()}.${ext}`;

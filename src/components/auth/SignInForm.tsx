@@ -6,11 +6,12 @@ import { createClient } from "@/lib/supabase/client";
 import { signInSchema } from "@/lib/validation/schemas";
 import { Button } from "@/components/ui/Button";
 import { Input, Label } from "@/components/ui";
+import { getSafeRedirectPath } from "@/lib/auth/redirect";
 
 export function SignInForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const redirectTo = params.get("redirectTo") || "/profile";
+  const redirectTo = getSafeRedirectPath(params.get("redirectTo"));
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

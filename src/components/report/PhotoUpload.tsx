@@ -67,8 +67,7 @@ export function PhotoUpload({
         <input
           ref={inputRef}
           type="file"
-          accept="image/jpeg,image/png,image/webp"
-          capture="environment"
+          accept="image/jpeg,image/png"
           className="sr-only"
           onChange={handleChange}
           aria-label="Upload a photo of the cat"
@@ -85,7 +84,7 @@ export function PhotoUpload({
       )}
 
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-      <p className="text-xs text-gray-400">JPG, PNG, or WEBP. Max 8 MB. Optional but helps carers identify the cat.</p>
+      <p className="text-xs text-gray-400">JPG or PNG. Max 8 MB. Optional but helps carers identify the cat.</p>
     </div>
   );
 }

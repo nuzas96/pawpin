@@ -43,7 +43,7 @@ export function AiSuggestButton({
     setLoading(true);
     try {
       const base64 = await fileToBase64(photoFile);
-      const result = await suggestTraitsFromPhoto({ base64, mime: photoFile.type as "image/jpeg" | "image/png" | "image/webp" });
+      const result = await suggestTraitsFromPhoto({ base64, mime: photoFile.type as "image/jpeg" | "image/png" });
       if (!result.ok) {
         setError(result.error);
         return;

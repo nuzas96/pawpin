@@ -55,6 +55,8 @@ describe("stripImageMetadata — JPEG", () => {
   it("removes the APP1/EXIF segment while keeping the image valid", () => {
     const { bytes } = buildJpegWithExif();
     const stripped = stripImageMetadata(bytes, "image/jpeg");
+    expect(stripped).not.toBeNull();
+    if (!stripped) return; // for TS
 
     // Still a JPEG.
     expect(detectImageType(stripped)).toBe("image/jpeg");
@@ -71,6 +73,8 @@ describe("stripImageMetadata — JPEG", () => {
   it("preserves the scan data (bytes after SOS) intact", () => {
     const { bytes } = buildJpegWithExif();
     const stripped = stripImageMetadata(bytes, "image/jpeg");
+    expect(stripped).not.toBeNull();
+    if (!stripped) return; // for TS
     // Ends with EOI.
     expect(stripped[stripped.length - 2]).toBe(0xff);
     expect(stripped[stripped.length - 1]).toBe(0xd9);
@@ -81,6 +85,8 @@ describe("stripImageMetadata — PNG", () => {
   it("removes tEXt metadata chunks while keeping IHDR/IDAT/IEND", () => {
     const png = buildPngWithText();
     const stripped = stripImageMetadata(png, "image/png");
+    expect(stripped).not.toBeNull();
+    if (!stripped) return; // for TS
 
     expect(detectImageType(stripped)).toBe("image/png");
     expect(stripped.byteLength).toBeLessThan(png.byteLength);
@@ -96,16 +102,22 @@ describe("stripImageMetadata — PNG", () => {
   });
 });
 
-describe("stripImageMetadata — WEBP + fail-open", () => {
-  it("passes WEBP through unchanged (documented partial support)", () => {
+describe("stripImageMetadata — fail-closed", () => {
+  it("returns null for WEBP or unsupported formats to prevent metadata bypass", () => {
     const webp = u8(0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 1, 2, 3);
     const out = stripImageMetadata(webp, "image/webp");
-    expect(out).toEqual(webp);
+    expect(out).toBeNull();
   });
 
-  it("returns the original bytes on malformed JPEG (never throws)", () => {
+  it("returns null on malformed JPEG", () => {
     const junk = u8(0xff, 0xd8, 0x00, 0x00, 0x00);
     const out = stripImageMetadata(junk, "image/jpeg");
-    expect(out).toEqual(junk);
+    expect(out).toBeNull();
+  });
+
+  it("returns null on malformed PNG", () => {
+    const junk = u8(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00);
+    const out = stripImageMetadata(junk, "image/png");
+    expect(out).toBeNull();
   });
 });

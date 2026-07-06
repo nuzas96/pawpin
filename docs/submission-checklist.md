@@ -20,6 +20,9 @@ This checklist verifies that the PawPin repository is fully prepped for the judg
 - [x] `.env.example` is complete and up to date.
 - [x] Location privacy (fuzzy coordinates) is actively tested and verified.
 - [x] Row Level Security (RLS) is enabled and tested across all Supabase tables.
+- [x] Images are safely stripped of metadata (EXIF/GPS) before storage or AI processing; unsupported formats are rejected.
+- [x] AI Vision only receives sanitized images, never user data.
+- [x] Open Redirect vulnerabilities are mitigated via a strict `getSafeRedirectPath` helper.
 
 ## Documentation
 - [x] `README.md` is fully updated with the pitch, tech stack, and setup instructions.

@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { aiVisionInputSchema, type AiVisionInput, type AiTraitSuggestion } from "@/lib/validation/schemas";
-import { detectImageType, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME } from "@/lib/validation/image";
+import { detectImageType, stripImageMetadata, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME } from "@/lib/validation/image";
 import { isAiVisionEnabled, suggestTraitsFromImage } from "@/lib/ai/vision";
 import { checkRateLimit, RATE_LIMITS, RATE_LIMIT_MESSAGE } from "@/lib/rateLimit";
 
@@ -51,10 +51,16 @@ export async function suggestTraitsFromPhoto(input: AiVisionInput): Promise<Sugg
   }
   const detected = detectImageType(bytes);
   if (!detected || !(ALLOWED_IMAGE_MIME as readonly string[]).includes(detected)) {
-    return { ok: false, error: "This file doesn't look like a valid JPG, PNG, or WEBP image." };
+    return { ok: false, error: "This file doesn't look like a valid JPG or PNG image." };
   }
 
-  const result = await suggestTraitsFromImage(parsed.data.base64, detected);
+  const cleanBytes = stripImageMetadata(bytes, detected);
+  if (!cleanBytes) {
+    return { ok: false, error: "Could not safely process the image metadata." };
+  }
+
+  const cleanBase64 = Buffer.from(cleanBytes).toString("base64");
+  const result = await suggestTraitsFromImage(cleanBase64, detected);
 
   if (result.status === "disabled") return { ok: true, enabled: false, suggestion: null };
   if (result.status === "error") {

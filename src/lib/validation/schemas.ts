@@ -343,6 +343,6 @@ export type AiTraitSuggestion = z.infer<typeof aiTraitSuggestionSchema>;
 // ever sent to the AI — never coordinates, contact, or user identity.
 export const aiVisionInputSchema = z.object({
   base64: z.string().min(1).max(12_000_000), // ~ 8 MB image once base64-encoded
-  mime: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  mime: z.enum(["image/jpeg", "image/png"]),
 });
 export type AiVisionInput = z.infer<typeof aiVisionInputSchema>;

@@ -176,7 +176,7 @@ Current verified status:
 ```text
 Typecheck: passed
 Lint: passed
-Tests: 116 passing tests
+Tests: 123 passing tests
 Build: passed
 ```
 
@@ -280,7 +280,6 @@ This helps keep community data trustworthy and reduces abuse.
 - AI Vision is optional and only suggests visible traits. It is not biometric cat recognition.
 - Realtime dashboard updates require refresh in this version.
 - Fuzzy location protects cats, but public users cannot see exact rescue coordinates.
-- WebP metadata stripping is partial compared to JPEG/PNG metadata handling.
 - Profile activity pages are read-only and focused on review, not full management.
 
 ## 🌱 Future Improvements

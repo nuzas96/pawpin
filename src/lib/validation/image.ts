@@ -7,9 +7,8 @@ export const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB
 export const ALLOWED_IMAGE_MIME = [
   "image/jpeg",
   "image/png",
-  "image/webp",
 ] as const;
-export const ALLOWED_IMAGE_EXT = ["jpg", "jpeg", "png", "webp"] as const;
+export const ALLOWED_IMAGE_EXT = ["jpg", "jpeg", "png"] as const;
 
 export type ImageValidationResult =
   | { ok: true }
@@ -24,7 +23,7 @@ export function validateImageFile(file: {
   if (!(ALLOWED_IMAGE_MIME as readonly string[]).includes(file.type)) {
     return {
       ok: false,
-      error: "Unsupported file type. Allowed: JPG, JPEG, PNG, WEBP.",
+      error: "Unsupported file type. Allowed: JPG, JPEG, PNG.",
     };
   }
   if (file.size <= 0) {
@@ -60,14 +59,6 @@ export function detectImageType(bytes: Uint8Array): string | null {
   ) {
     return "image/png";
   }
-  // WEBP: "RIFF" .... "WEBP"
-  if (
-    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 &&
-    bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 &&
-    bytes[10] === 0x42 && bytes[11] === 0x50
-  ) {
-    return "image/webp";
-  }
   return null;
 }
 
@@ -85,23 +76,19 @@ export function detectImageType(bytes: Uint8Array): string | null {
 //     image quality and colour are preserved.
 //   - PNG: drops textual/metadata chunks (tEXt, zTXt, iTXt, tIME, eXIf);
 //     keeps all rendering-critical chunks.
-//   - WEBP: passed through unchanged — a full RIFF/EXIF/XMP-chunk rewrite is
-//     the one documented remaining gap (see docs/security-report.md).
 //
-// On any parse surprise the ORIGINAL bytes are returned (fail-open on
-// functionality: a valid image still uploads; this is no worse than the
-// pre-M6 behaviour). Callers that care can compare byte lengths.
+// On any parse surprise, null is returned (fail-closed).
 // ---------------------------------------------------------------------------
 
-function stripJpegMetadata(bytes: Uint8Array): Uint8Array {
+function stripJpegMetadata(bytes: Uint8Array): Uint8Array | null {
   // Must start with SOI (FF D8).
-  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return bytes;
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
 
   const out: number[] = [0xff, 0xd8];
   let i = 2;
 
   while (i < bytes.length) {
-    if (bytes[i] !== 0xff) return bytes; // malformed — bail, keep original
+    if (bytes[i] !== 0xff) return null; // malformed — bail, fail closed
     const marker = bytes[i + 1];
 
     // Start of Scan: copy the rest verbatim (entropy-coded data + EOI).
@@ -119,7 +106,7 @@ function stripJpegMetadata(bytes: Uint8Array): Uint8Array {
 
     // Length-carrying segment: 2 bytes big-endian, including the length bytes.
     const length = (bytes[i + 2] << 8) | bytes[i + 3];
-    if (length < 2 || i + 2 + length > bytes.length) return bytes; // malformed
+    if (length < 2 || i + 2 + length > bytes.length) return null; // malformed
 
     const isExifOrXmp = marker === 0xe1; // APP1
     const isComment = marker === 0xfe; // COM
@@ -134,9 +121,9 @@ function stripJpegMetadata(bytes: Uint8Array): Uint8Array {
 
 const PNG_STRIP_CHUNKS = new Set(["tEXt", "zTXt", "iTXt", "tIME", "eXIf"]);
 
-function stripPngMetadata(bytes: Uint8Array): Uint8Array {
+function stripPngMetadata(bytes: Uint8Array): Uint8Array | null {
   const SIG_LEN = 8;
-  if (bytes.length < SIG_LEN + 12) return bytes;
+  if (bytes.length < SIG_LEN + 12) return null;
 
   const out: number[] = [];
   for (let j = 0; j < SIG_LEN; j++) out.push(bytes[j]);
@@ -145,7 +132,7 @@ function stripPngMetadata(bytes: Uint8Array): Uint8Array {
   const decoder = new TextDecoder("latin1");
   while (i + 8 <= bytes.length) {
     const length = (bytes[i] << 24) | (bytes[i + 1] << 16) | (bytes[i + 2] << 8) | bytes[i + 3];
-    if (length < 0 || i + 12 + length > bytes.length) return bytes; // malformed
+    if (length < 0 || i + 12 + length > bytes.length) return null; // malformed
     const type = decoder.decode(bytes.subarray(i + 4, i + 8));
     const chunkEnd = i + 12 + length; // 4 len + 4 type + data + 4 crc
 
@@ -162,15 +149,15 @@ function stripPngMetadata(bytes: Uint8Array): Uint8Array {
 
 /**
  * Strip privacy-sensitive metadata from an image's bytes based on its
- * detected MIME. Returns new bytes (or the original on parse issues / for
- * WEBP). Pure function, no external dependencies.
+ * detected MIME. Returns new bytes (or null on parse issues).
+ * Pure function, no external dependencies.
  */
-export function stripImageMetadata(bytes: Uint8Array, detectedMime: string): Uint8Array {
+export function stripImageMetadata(bytes: Uint8Array, detectedMime: string): Uint8Array | null {
   try {
     if (detectedMime === "image/jpeg") return stripJpegMetadata(bytes);
     if (detectedMime === "image/png") return stripPngMetadata(bytes);
-    return bytes; // image/webp (partial — documented) or anything else
+    return null; // anything else fails closed
   } catch {
-    return bytes;
+    return null;
   }
 }
