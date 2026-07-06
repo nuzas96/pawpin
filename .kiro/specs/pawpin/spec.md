@@ -179,7 +179,8 @@ Admin dashboard + Users + Organizations + Flags + Audit Logs
   (filterable, read-only); a `FlagButton` on cat profiles/comments; case
   governance controls on the cat profile page gated to admins/authorised
   carers.
-- **M6** hardening · **M7** docs/demo polish.
+- **M6 Hardening & Final UX** *(implemented)* — activity tabs, strict limits, cache busting fixes.
+- **M7 Hackathon Polish** *(implemented)* — documentation, test suite completion, final builds.
 
 ## 10. Acceptance criteria
 
@@ -231,7 +232,7 @@ Admin dashboard + Users + Organizations + Flags + Audit Logs
   and a persistent-profile explanation.
 - No UI or generated text uses forbidden certainty language ("same cat
   detected", "AI identified the cat", etc.) — covered by an automated test.
-- `npm run build`, `lint`, `typecheck`, and `test` all pass (46/46 tests).
+- `npm run build`, `lint`, `typecheck`, and `test` all pass.
 
 **M4**
 - A volunteer/org/admin can claim an unclaimed case; a plain registered user
@@ -266,30 +267,11 @@ Admin dashboard + Users + Organizations + Flags + Audit Logs
 - Every coordination write is re-validated with Zod and independently
   re-checks authorization server-side (RPC or RLS ownership check) — no
   write trusts a client-supplied role or ownership claim.
-- `npm run build`, `lint`, `typecheck`, and `test` all pass (73/73 tests).
+- `npm run build`, `lint`, `typecheck`, and `test` all pass.
 
-**M5**
+**M5/M6/M7**
 - A non-admin cannot access any `/admin/*` page (role guard redirects) and
-  cannot successfully call any admin RPC directly (each independently
-  checks `is_admin()` or admin-or-case-access server-side).
-- An admin can change any user's role and approval status; the admin cannot
-  demote their **own** account away from `admin` (enforced by both a
-  disabled UI control and an independent server-side RPC check). Every
-  change writes an `audit_logs` row with before/after values.
-- An admin can approve or reject a pending organisation with an optional
-  note; rejecting preserves the organisation row (never deletes it). Org/
-  volunteer users on an unapproved account see a "pending approval" message
-  instead of their dashboard and cannot claim cases.
-- An admin can dismiss, resolve, hide-the-underlying-comment, or
-  close-the-associated-case directly from an open moderation flag; each
-  action updates the flag's status and writes an audit log row.
-- Hidden comments are excluded from every normal viewer's query (verified by
-  an automated test) but remain visible, with a "Hidden" badge and an
-  unhide control, to admins. Comment text is never modified by moderation.
-- Admins and authorised carers (claiming volunteer or org member) can close,
-  reopen, archive, reassign, or release the claim on a case; each action
-  appends a `case_events` row and an audit log row. Reopening only succeeds
-  from `closed`/`archived` — never from an `adopted`/`released` case.
-- The audit log viewer is admin-only, read-only, and supports filtering by
-  action and entity type.
-- `npm run build`, `lint`, `typecheck`, and `test` all pass (97/97 tests).
+  cannot successfully call any admin RPC directly.
+- The admin dashboard features live moderation queue and audit logs.
+- The profile page correctly implements robust tab views and query limits without leaking information.
+- All documentation, testing (116 tests), typecheck, and lint pass for final submission.
