@@ -7,6 +7,7 @@ export type SessionUser = {
   email: string | null;
   role: StoredRole;
   displayName: string | null;
+  isApproved: boolean;
 };
 
 /**
@@ -23,7 +24,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, display_name")
+    .select("role, display_name, is_approved")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -34,6 +35,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     email: user.email ?? null,
     role,
     displayName: profile?.display_name ?? null,
+    isApproved: profile?.is_approved ?? false,
   };
 }
 
