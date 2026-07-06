@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { DEFAULT_ROLE, isStoredRole, type StoredRole } from "@/lib/auth/roles";
+import { getSafeRedirectPath } from "@/lib/auth/redirect";
 
 export type SessionUser = {
   id: string;
@@ -42,7 +43,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 /** Require an authenticated user; redirect guests to sign in. */
 export async function requireUser(redirectTo = "/auth/sign-in"): Promise<SessionUser> {
   const user = await getSessionUser();
-  if (!user) redirect(redirectTo);
+  if (!user) redirect(getSafeRedirectPath(redirectTo, "/auth/sign-in"));
   return user;
 }
 

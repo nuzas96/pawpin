@@ -1,5 +1,6 @@
 import "server-only";
 
+import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -47,6 +48,12 @@ export async function uploadCatPhoto(
   }
 ): Promise<PhotoUploadResult> {
   const { uploaderId, file, bytes } = params;
+
+  // Prevent path traversal by strictly requiring a valid UUID
+  const uuidCheck = z.string().uuid().safeParse(uploaderId);
+  if (!uuidCheck.success) {
+    return { ok: false, error: "Invalid uploader ID. Cannot process photo." };
+  }
 
   const basicCheck = validateImageFile(file);
   if (!basicCheck.ok) return { ok: false, error: basicCheck.error };
